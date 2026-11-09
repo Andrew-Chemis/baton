@@ -9,7 +9,8 @@ Vocabulary: a **card** is one unit of work. A **claim** is an agent's lease on
 a card, carrying the agent id, repo, worktree and branch, and expiring at
 `leaseUntil` unless renewed by a **heartbeat**. An **event** is one append-only
 change to a card (move, comment, claim, release, edit) with a per-card
-sequence number. A card is **stale** when its claim's lease has expired.
+sequence number. A card is **stale** when its claim's lease has expired. A
+card's **last agent** is the agent that most recently held it, claim or not.
 
 ## Requirement 1: one claim per card, decided by the store
 
@@ -67,10 +68,15 @@ Acceptance criteria:
 - WHEN an agent asks for changes on a card since sequence N THE SYSTEM SHALL
   return every event after N in order, and SHALL include the full comment text
   for comment events.
-- WHEN an agent acknowledges sequence N THE SYSTEM SHALL record it on the claim,
-  and SHALL refuse an acknowledgement of a sequence the card has not reached.
-- THE SYSTEM SHALL show on the board, per card, whether the owning agent has
+- WHEN the holder or last agent acknowledges sequence N THE SYSTEM SHALL record
+  it on the card, and SHALL refuse an acknowledgement of a sequence the card
+  has not reached.
+- THE SYSTEM SHALL show on the board, per card, whether the last agent has
   acknowledged the latest human event.
+- WHEN an agent asks for its attention list THE SYSTEM SHALL return every card
+  whose last agent it is that is `reopened` or has a human event after its
+  acknowledgement, so a passed card that a human moved back or commented on
+  reaches the agent without a card id.
 
 ## Requirement 4: a backward move means the work is not done
 
@@ -87,8 +93,9 @@ Acceptance criteria:
   until an agent claims it, after which the flag clears.
 - WHEN a human moves a card to Done THE SYSTEM SHALL clear any claim and
   append a `released` event with reason `human_done`.
-- WHEN an agent moves a card to Done while a human comment is unacknowledged
-  THE SYSTEM SHALL refuse the move and name the unacknowledged sequence.
+- WHEN an agent moves a card to In review or Done while a human event is
+  unacknowledged THE SYSTEM SHALL refuse the move and name the unacknowledged
+  sequence.
 
 ## Requirement 5: cards and claims know their worktree
 
@@ -134,7 +141,8 @@ one token and retry freely, so a flaky network never creates a duplicate.
 Acceptance criteria:
 
 - THE SYSTEM SHALL accept a bearer token per agent identity, issued and revoked
-  from the board page, stored only as a hash, and SHALL reject a revoked token.
+  from the board page, stored only as a hash, and SHALL reject a revoked token
+  within five minutes of revocation.
 - THE SYSTEM SHALL accept an `Idempotency-Key` header on every write, and WHEN a
   key is repeated within 24 hours THE SYSTEM SHALL return the first response
   without a second write.
@@ -181,8 +189,9 @@ Acceptance criteria:
 - THE SYSTEM SHALL publish the agent CLI as a second package with a `bin`,
   runnable with `npx` or installed, and SHALL keep the two on one version.
 - THE SYSTEM SHALL contain no account id, domain, role ARN, zone id or
-  hosted-zone name in the public repo; a check in CI SHALL fail on any
-  12-digit account-shaped number or `andrewchemis.dev` string outside tests.
+  hosted-zone name in the published packages or workflows; a check in CI SHALL
+  fail on any 12-digit account-shaped number, `arn:aws:` or the owner's domain
+  under `packages/` (outside tests) or `.github/`.
 - WHEN a commit lands on `main` THE SYSTEM SHALL compute the next version from
   Conventional Commits, write the changelog and publish a GitHub release;
   WHEN that release is published THE SYSTEM SHALL build, test, pack and stage

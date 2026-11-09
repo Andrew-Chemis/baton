@@ -39,17 +39,22 @@ on. Two GSIs.
 | Key         | `KEY#<repo>/<slug>` | `META`          |                                |                         |
 | Agent       | `AGENT#<id>`    | `META`              |                                |                         |
 | Token       | `TOKEN#<sha256>`| `META`              |                                |                         |
-| Idempotency | `IDEM#<agent>#<key>` | `META`         |                                |                         |
+| Idempotency | `IDEM#<actor>#<key>` | `META`         |                                |                         |
 
 Card attributes: `id`, `key?`, `title`, `body`, `repo`, `column`, `pos`
-(fractional string for drag ordering), `seq` (last event number),
-`reopened`, `archived`, `links[]`, `claim?`, `createdAt`, `updatedAt`.
+(LexoRank-style string that sorts lexicographically, for drag ordering),
+`seq` (last event number), `lastHumanSeq` (last event by a human),
+`lastAgentId`, `ackedSeq`, `reopened`, `archived`, `links[]`, `claim?`,
+`createdAt`, `updatedAt`.
 
 `claim`: `{ agentId, repo, worktree, branch, session, leaseUntil,
-heartbeatAt, ackedSeq }`. The claim lives on the card item so one conditional
-`UpdateItem` both tests and sets it (Req 1.2). Events live as separate items
-written in the same `TransactWriteItems` as the card update, so `seq` and the
-event list cannot disagree.
+heartbeatAt }`. The claim lives on the card item so one conditional
+`UpdateItem` both tests and sets it (Req 1.2). `lastAgentId` and `ackedSeq`
+sit on the card, not inside `claim`, so they survive a `pass`: the agent that
+passed a card to review is still the one a reopen or a comment must reach
+(Req 3.5), and the unread badge (Req 3.4) does not vanish with the claim.
+Events live as separate items written in the same `TransactWriteItems` as the
+card update, so `seq` and the event list cannot disagree.
 
 Idempotency items carry a DynamoDB TTL of 24 hours and store the first
 response body (Req 7.2). Nothing else expires.
@@ -61,14 +66,16 @@ response body (Req 7.2). Nothing else expires.
 | claim | `attribute_not_exists(claim) OR claim.leaseUntil < :now OR claim.agentId = :me` |
 | heartbeat | `claim.agentId = :me` |
 | release | `claim.agentId = :me` |
-| ack | `claim.agentId = :me AND seq >= :n` |
-| agent move to Done | `claim.agentId = :me AND claim.ackedSeq = seq` |
+| ack | `lastAgentId = :me AND seq >= :n` |
+| agent move to in_review or done | `claim.agentId = :me AND ackedSeq >= lastHumanSeq` |
 | create with key | `attribute_not_exists(PK)` on the Key item, in the same transaction as the Card |
 
 A failed condition returns the current card, so the caller gets the
 conflicting claim or sequence in one round trip (Req 7.4). An expired-lease
 claim that succeeds reads the old `claim.agentId` from `ReturnValues:
-ALL_OLD` to write the `taken_over` event.
+ALL_OLD` to write the `taken_over` event. The move condition compares against
+`lastHumanSeq`, not `seq`: the agent's own events (its claim, its comments)
+raise `seq` and must not block its own move.
 
 Lease length is 10 minutes; the heartbeat hook fires at most once a minute.
 A card whose agent has been silent for 10 minutes shows stale (Req 2.3). Both
@@ -101,6 +108,7 @@ All routes under `/api`. Agent routes take `Authorization: Bearer <token>` and
 | Method, path | Who | Does |
 | --- | --- | --- |
 | `GET /cards?repo=&column=&archived=` | both | board or repo listing, staleness computed |
+| `GET /cards?attention=me` | agent | cards whose `lastAgentId` is the caller and that are `reopened` or have `lastHumanSeq > ackedSeq` (Req 3.5) |
 | `POST /cards` | both | create; `key` dedupes (Req 5.4) |
 | `GET /cards/{id}` | both | card with claim and staleness |
 | `PATCH /cards/{id}` | both | title, body, links; `edited` event |
@@ -117,14 +125,16 @@ All routes under `/api`. Agent routes take `Authorization: Bearer <token>` and
 Errors: `{ code, message, card? }` with codes `claim_held`, `not_holder`,
 `seq_ahead`, `unacked_comments`, `missing_worktree`, `token_revoked`,
 `idempotent_replay`. A listing marks each card `state: claimed | stale |
-unowned | unclaimed` from `claim`, `leaseUntil` and `column`.
+unowned | unclaimed` from `claim`, `leaseUntil` and `column`, and `unread:
+true` when `lastHumanSeq > ackedSeq`.
 
 ## Auth
 
 Humans: one Cognito user pool, hosted UI, the HTTP API's JWT authorizer.
 Agents: a bearer token per agent identity, created from the board, shown
 once, stored as its SHA-256; a Lambda authorizer looks the hash up and caches
-the result for five minutes. Revoking deletes the Token item. Cognito's
+the result for five minutes, which is the revocation window Req 7.1 allows.
+Revoking deletes the Token item. Cognito's
 client-credentials flow was the alternative and is not used: machine-to-machine
 app clients are billed per token request, and a token the agent reads from
 one environment variable is the cheaper, simpler fit for the cost policy.
@@ -145,8 +155,11 @@ expired), unowned (in-progress column, no claim), reopened, unread (owner's
 
 ## Skill
 
-`plugins/skills/skills/baton/` in `claude-plugins`: `SKILL.md`, `cli.mjs`,
-`hooks/heartbeat.sh`, `hooks/stop.sh`. The CLI resolves repo from the origin
+`plugins/skills/skills/baton/` in `claude-plugins`: `SKILL.md`,
+`hooks/heartbeat.sh`, `hooks/stop.sh`. The CLI itself is the published
+`@andrewchemis/baton-cli`; the hooks and the skill call it through `npx` at a
+pinned version, so the plugin ships no copy of it. The CLI resolves repo from
+the origin
 URL, worktree from `git rev-parse --show-toplevel`, branch from `git
 rev-parse --abbrev-ref HEAD`, and session from `CLAUDE_SESSION_ID` when set.
 `take` writes `.git/baton-card` (worktree-local) so the hooks know which
@@ -154,16 +167,18 @@ card to heartbeat and drop without arguments. The verbs follow the metaphor:
 `take` is the claim route, `pass` is release plus move (reason `done`, `--to`
 defaults to `in_review`), `drop` is release in place (`--reason paused` or
 `blocked`); the API keeps the nouns `claim` and `release`. `SKILL.md`
-prescribes the loop: `list` for the repo, `take` or stop, work, `check` plus
-`ack` before any `pass`, `drop` when stopping early, or let the stop hook
-drop with `session_ended`.
+prescribes the loop: `check` with no card id first (the attention list, Req
+3.5), then `list` for the repo, `take` or stop, work, `check <id>` plus `ack`
+before any `pass`, `drop` when stopping early, or let the stop hook drop with
+`session_ended`.
 
 ## Packages
 
 `@andrewchemis/baton-cdk` exports `BatonBoard`, a construct that owns the
 table, user pool, HTTP API, Lambda and SPA bucket, and `BatonDistribution`,
 the CloudFront piece, so a consumer can place the edge in its certificate
-stack the way tributary does. Props: `domainName`, `certificate`,
+stack the way tributary does (the bucket and API URL cross regions through
+`crossRegionReferences`, as tributary's do). Props: `domainName`, `certificate`,
 `hostedZone`, `leaseMinutes`, `heartbeatSeconds`, `protectData`,
 `flatRatePlan?`. The tarball carries `lib/` (compiled construct),
 `assets/api/index.js` (esbuild bundle of the Lambda, one file) and
@@ -176,9 +191,10 @@ so `npx @andrewchemis/baton-cli take <id>` works in a remote session
 without `pnpm install`. Both packages share one version pinned in lockstep
 (`workspace:*` packs as exact).
 
-Nothing account-specific enters the public repo: a CI check greps the tree
-outside `test/` for 12-digit numbers, `arn:aws:`, and the owner's domain and
-fails on a hit (Req 9.3).
+Nothing account-specific enters the published packages: a CI check greps
+`packages/` outside `test/` and `.github/` for 12-digit numbers, `arn:aws:`
+and the owner's domain, and fails on a hit (Req 9.3). The spec and README are
+outside the check so they can name the consuming repo.
 
 ## Publishing
 
@@ -239,8 +255,9 @@ Residue requirements and what the reviewer judges them against:
 
 - Req 8.5, `SKILL.md`: an agent reading only the skill performs the full loop
   in the right order; a reviewer walks it as a new session would.
-- Req 6.1, board legibility: the five card states are distinguishable at a
-  glance in light and dark; stale and unowned are not mistaken for claimed.
+- Req 6.1, board legibility: the four card states plus `reopened` and `unread`
+  are distinguishable at a glance in light and dark; stale and unowned are
+  not mistaken for claimed.
 - Req 7.4, error payloads: each refusal tells the agent what to do next
   without reading the API doc.
 

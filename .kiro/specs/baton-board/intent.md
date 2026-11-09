@@ -82,13 +82,9 @@ work is a baton that passes from session to session, and a dropped one shows.
 
 ## Open
 
-- Whether the board is one system or two: the board service, and the agent
-  skill that calls it. Likely two deliverables, one spec. Non-blocking.
 - How stale is stale: the heartbeat interval and the lease length before a
   claim can be taken over. Non-blocking; a default of a few minutes is
   assumed until measured.
-- Whether human edits are delivered to agents as an event log the agent
-  acknowledges, or as a version number the agent compares. Non-blocking; the
-  design should pick one and say why.
-- How an agent proves which worktree and branch it is in, and whether a claim
-  should bind to a branch name, a worktree path, or both. Non-blocking.
+- Whether a claim should bind to a branch name, a worktree path, or both.
+  The design records both and warns on branch reuse; whether that is enough
+  is non-blocking and waits on use.

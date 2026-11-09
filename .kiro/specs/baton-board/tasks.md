@@ -8,12 +8,17 @@ Status: active
     with `taken_over` event
   - R2.1-2.5 → heartbeat extends and writes no event; non-holder refused;
     stale computed from `leaseUntil`; release reasons; `unowned` state
-  - R3.1-3.4 → events appended with actor and seq; `events?since` ordering and
-    comment text; ack bounds; unread flag in listing
+  - R3.1-3.5 → events appended with actor and seq; `events?since` ordering and
+    comment text; ack bounds and ack by last agent after `pass`; unread flag
+    in listing; `attention=me` returns a passed card after a human comment
   - R4.1-4.4 → backward move sets `reopened`; claim clears it; human done
-    releases with `human_done`; agent done refused with `unacked_comments`
+    releases with `human_done`; agent move to review or done refused with
+    `unacked_comments`, and allowed after the agent's own comment
   - R5.1-5.4 → claim rejects missing worktree; branch-reuse warning; repo
     listing fields; key dedupe returns existing card
+  - R6.2-6.4 → web component tests: a drop calls `move` once with the target
+    column and `pos`; comment, edit, create and archive call their routes;
+    repo filter and archived toggle
   - R6.5, 7.1-7.3 → routes reject without JWT or token; revoked token; replayed
     `Idempotency-Key` returns first body; actor kind on events
   - R8.1-8.4 → CLI subcommands print JSON; outside a git tree fails named;
@@ -35,6 +40,6 @@ Status: active
 - [ ] 8. CLI package: `bin`, git detection, token resolution, JSON output <!-- pattern: advisor -->
 - [ ] 9. Build and pack: esbuild the Lambda and Vite the web app into `assets/`, `files` allowlists, pack test <!-- pattern: advisor -->
 - [ ] 10. `changelog.yml` and `release.yml` with staged npm publishing; owner sets up the `npm` environment and trusted publishing <!-- pattern: solo -->
-- [ ] 11. Skill in `claude-plugins`: `SKILL.md`, heartbeat and stop hooks calling the CLI <!-- pattern: advisor -->
+- [ ] 11. Skill in `claude-plugins`: `SKILL.md`, heartbeat and stop hooks calling the published CLI through `npx` at a pinned version <!-- pattern: advisor -->
 - [ ] 12. Consumer: `apps/baton` in `andrewchemis.dev` on tributary's layout, config, pipeline, asset-path synth test <!-- pattern: advisor -->
 - [ ] 13. Deploy through the `andrewchemis.dev` pipeline, seed the first agent token, run one real claim from a remote session <!-- pattern: solo -->
