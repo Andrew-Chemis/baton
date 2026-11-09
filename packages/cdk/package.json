@@ -32,9 +32,9 @@
     "assets/web"
   ],
   "scripts": {
-    "build:assets": "node scripts/build-assets.ts",
+    "build:assets": "node scripts/build-assets.mts",
     "build:lib": "tsc -p tsconfig.build.json",
-    "build": "rm -rf lib assets/api assets/web && node scripts/build-assets.ts && tsc -p tsconfig.build.json"
+    "build": "rm -rf lib assets/api assets/web && node scripts/build-assets.mts && tsc -p tsconfig.build.json"
   },
   "peerDependencies": {
     "aws-cdk-lib": "^2.270.0",

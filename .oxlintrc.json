@@ -13,6 +13,11 @@
   "ignorePatterns": ["node_modules/**", "**/dist/**", "**/lib/**", "packages/cdk/assets/**", "coverage/**", "cdk.out/**", ".cache/**"],
   "overrides": [
     {
+      // CDK constructs register themselves with their scope when created; the instance is never read again.
+      "files": ["packages/cdk/src/**", "packages/cdk/test/synth/**"],
+      "rules": { "eslint/no-new": "off" }
+    },
+    {
       "files": ["**/test/**"],
       "rules": {
         "typescript/no-floating-promises": "off",

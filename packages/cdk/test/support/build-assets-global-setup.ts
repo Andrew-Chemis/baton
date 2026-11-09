@@ -3,5 +3,5 @@ import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 
 export default function setup() {
-  execFileSync('node', ['scripts/build-assets.ts'], { cwd: resolve(import.meta.dirname, '../..'), stdio: 'inherit' });
+  execFileSync('node', ['scripts/build-assets.mts'], { cwd: resolve(import.meta.dirname, '../..'), stdio: 'inherit' });
 }
