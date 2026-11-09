@@ -165,7 +165,12 @@ The CLI reads `BATON_URL` and `BATON_TOKEN`, then falls back to
 ## Web app
 
 Vite SPA on S3 behind CloudFront with OAC, flat-rate plan as the other apps,
-SPA rewrite by CloudFront Function, `/api/*` to the HTTP API. Three pages.
+SPA rewrite by CloudFront Function, `/api/*` to the HTTP API. The headers
+function that already adds the security headers also marks a served
+`/assets/*` file `immutable` for a year (Vite names those by content hash);
+the bucket's `max-age=0, must-revalidate` stays on everything else. No second
+deployment, no cache or response-headers policy, so the FREE and PRO tiers
+still apply. Three pages.
 The dashboard (`/`) lists every project as a row: name, repos, the five
 counts, last activity, and a link to its board; a register form takes a name
 and repos. The board (`/p/<project>`) has columns, drag with pointer events,

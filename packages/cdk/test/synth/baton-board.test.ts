@@ -6,6 +6,7 @@ import { Certificate } from 'aws-cdk-lib/aws-certificatemanager';
 import { PublicHostedZone } from 'aws-cdk-lib/aws-route53';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { runInNewContext } from 'node:vm';
 import { describe, expect, test } from 'vitest';
 import { API_ASSET_PATH, WEB_ASSET_PATH } from '../../src/assets.ts';
 import { BatonBoard, type BatonBoardProps } from '../../src/index.ts';
@@ -213,6 +214,22 @@ describe('synthesis', () => {
     expect(JSON.stringify(api?.DomainName)).toContain('ApiEndpoint');
     template.resourceCountIs('AWS::CloudFront::OriginAccessControl', 1);
     template.resourceCountIs('AWS::CloudFront::Function', 2);
+    // The headers function also marks the content-named files under /assets/ immutable, and only those, and only when served.
+    const code = Object.values(resourcesOf(template, 'AWS::CloudFront::Function'))
+      .map((f) => f.Properties.FunctionCode as string)
+      .find((c) => c.includes('strict-transport-security'));
+    expect(code, 'the security headers function').toBeDefined();
+    const handler = runInNewContext(`${code}; handler`) as (event: unknown) => { headers: Record<string, any> };
+    const respond = (uri: string, statusCode: number) =>
+      handler({ request: { uri }, response: { statusCode, headers: { 'cache-control': { value: 'max-age=0' } } } })
+        .headers;
+    expect(respond('/assets/index-DkkBH9eh.js', 200)['cache-control']).toEqual({
+      value: 'public, max-age=31536000, immutable',
+    });
+    expect(respond('/assets/index-DkkBH9eh.js', 200)['strict-transport-security']).toBeDefined();
+    expect(respond('/index.html', 200)['cache-control']).toEqual({ value: 'max-age=0' });
+    expect(respond('/config.json', 200)['cache-control']).toEqual({ value: 'max-age=0' });
+    expect(respond('/assets/missing.js', 404)['cache-control']).toEqual({ value: 'max-age=0' });
     template.resourceCountIs('AWS::Route53::RecordSet', 2);
     expect(Object.keys(resourcesOf(template, 'AWS::PricingPlanManager::Subscription'))).toEqual([]);
   });

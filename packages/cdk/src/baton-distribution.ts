@@ -14,6 +14,9 @@ import { API_ROOT } from './schema.js';
 
 export { CONTENT_SECURITY_POLICY };
 
+/** What a browser may do with a file whose name changes when its content does. */
+const IMMUTABLE_CACHE_CONTROL = 'public, max-age=31536000, immutable';
+
 export type FlatRatePlanTier = 'FREE' | 'PRO' | 'BUSINESS' | 'PREMIUM';
 
 /**
@@ -51,7 +54,7 @@ export interface BatonDistributionProps {
   /** Host name of the HTTP API, without scheme or path. */
   readonly apiDomainName: string;
   readonly webConfig: BatonWebConfig;
-  readonly flatRatePlan?: FlatRatePlan;
+  readonly flatRatePlan?: FlatRatePlan | undefined;
   /** Prefix for the names of the CloudFront functions. Default `baton`. */
   readonly resourcePrefix?: string;
   /** Path of the built web app. Default: the one inside this package. */
@@ -87,6 +90,11 @@ export class BatonDistribution extends Construct {
           "  headers['x-frame-options'] = { value: 'DENY' };",
           "  headers['referrer-policy'] = { value: 'same-origin' };",
           `  headers['content-security-policy'] = { value: ${JSON.stringify(CONTENT_SECURITY_POLICY)} };`,
+          // Vite names every file under /assets/ by its content, so a changed file is a new URL and a browser can keep the old
+          // one for good. The bucket's own header says revalidate, which is right for index.html and config.json.
+          "  if (event.request.uri.startsWith('/assets/') && event.response.statusCode === 200) {",
+          `    headers['cache-control'] = { value: '${IMMUTABLE_CACHE_CONTROL}' };`,
+          '  }',
           '  return event.response;',
           '}',
         ].join('\n'),

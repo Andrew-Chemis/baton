@@ -239,7 +239,7 @@ export class BatonBoard extends Construct {
           apiUrl: '/api',
           cognito: { domain: hostedUi.baseUrl(), clientId: this.userPoolClient.userPoolClientId },
         },
-        ...(props.flatRatePlan ? { flatRatePlan: props.flatRatePlan } : {}),
+        flatRatePlan: props.flatRatePlan,
         resourcePrefix: prefix,
       });
     }
