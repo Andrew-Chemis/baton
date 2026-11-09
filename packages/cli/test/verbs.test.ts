@@ -79,6 +79,14 @@ describe('the card verbs', () => {
     expect(taken.json.heartbeatSeconds).toBe(60);
   });
 
+  test('take --to in_review or done is refused before the board is asked, with the way to hand a card over', async () => {
+    for (const to of ['in_review', 'done']) {
+      const refused = await w.baton(['take', id, '--to', to], { cwd: checkout });
+      expect(refused.code).toBe(2);
+      expect(refused.stderr).toContain('baton pass --to <column>');
+    }
+  });
+
   test('taking it again from the same worktree is a no-op', async () => {
     const again = await w.baton(['take', id], { cwd: checkout });
     expect(again.code).toBe(0);

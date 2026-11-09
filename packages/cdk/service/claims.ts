@@ -1,6 +1,7 @@
 // Claims, heartbeats, acknowledgements, releases and moves: every operation whose rules depend on who holds a card.
 import { GSI2 } from '../src/schema.ts';
 import {
+  COLUMNS,
   RELEASE_REASONS,
   isBackward,
   isForward,
@@ -98,6 +99,13 @@ export async function claimCard(deps: Deps, ctx: RequestCtx, id: string, input: 
   const branch = requiredText(body.branch, 'branch', 255).trim();
   const session = (text(body.session, 'session', { max: 200, optional: true }) ?? null)?.trim() ?? null;
   const advanceTo = body.to === undefined ? undefined : columnOf(body.to, 'to');
+  if (isReview(advanceTo)) {
+    // A claim that moved a card into review would leave a live claim there past any unacknowledged comment.
+    const allowed = COLUMNS.filter((column) => !isReview(column));
+    throw badRequest(
+      `take moves a card to ${allowed.join(', ')} only. When the work is done, run \`baton pass --to <column>\` to hand it over.`,
+    );
+  }
   return cardOp(deps, ctx, id, (card, now) =>
     planClaim(deps, card, now, { agentId, worktree, me, repo, branch, session, advanceTo }),
   );

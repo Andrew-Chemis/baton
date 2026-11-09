@@ -201,6 +201,12 @@ export async function create(ctx: Context) {
 export async function take(ctx: Context) {
   const ref = ctx.args.positional[0];
   if (!ref) throw usage('Usage: baton take <card> [--to <column> | --no-move]');
+  const to = flag(ctx.args, 'to');
+  if (to === 'in_review' || to === 'done') {
+    throw usage(
+      'take moves a card to backlog, ready, in_progress, blocked only. When the work is done, run `baton pass --to <column>` to hand it over.',
+    );
+  }
   const checkout = await ctx.checkout();
   await resolveProject(ctx, checkout.repo);
   const card = await resolveCard(ctx, ref);
@@ -212,7 +218,7 @@ export async function take(ctx: Context) {
     session: state.session,
   };
   // A card taken from Backlog or Ready moves to In progress; one already further along stays where it is.
-  if (!has(ctx.args, 'no-move')) payload.to = flag(ctx.args, 'to') ?? 'in_progress';
+  if (!has(ctx.args, 'no-move')) payload.to = to ?? 'in_progress';
   const { body } = await ctx.post<{ card: { id: string; key: string | null }; warnings: unknown[] }>(
     `/cards/${card.id}/claim`,
     payload,

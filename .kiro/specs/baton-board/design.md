@@ -435,8 +435,12 @@ Where the build differs from the text above. None changes a requirement.
    `SessionEnd` with a `timeout` of 20, not `Stop`, for the reason under
    "Verified". The script is still named `stop.sh`.
 5. **`take` moves the card.** `take` also moves a card still in `backlog` or
-   `ready` to `in_progress` (`--to` picks another column, `--no-move` keeps it
-   where it is); the server only advances a card forward on a claim, never back.
+   `ready` to `in_progress` (`--to` picks another non-review column,
+   `--no-move` keeps it where it is); the server only advances a card forward
+   on a claim, never back. `--to in_review` and `--to done` are refused (400),
+   by the CLI and by the route: a claim that moved a card into review would
+   leave a live claim there past any comment the agent has not read. The way
+   into review is `pass`, which checks for unread comments.
 6. **`check` with no card is the attention list; `ack` records the sequence
    `check <card>` showed.** Without `--seq`, `ack` acknowledges the sequence
    the last `check <card>` in this worktree printed, so a comment that arrives

@@ -324,4 +324,19 @@ describe('R5 cards and claims know their worktree', () => {
     );
     expect(stays.body.card.column).toBe('in_review');
   });
+
+  test('a claim never moves a card into review or done, past a comment the agent has not read', async () => {
+    const card = await newCard(s.human, { column: 'ready' });
+    await s.human.post(`/cards/${card.id}/comments`, { text: 'Cover the iOS app too.' });
+    for (const to of ['in_review', 'done']) {
+      const out = await agent('a1').post(`/cards/${card.id}/claim`, claimBody({ to }));
+      expect(out.status).toBe(400);
+      expect(out.body.code).toBe('invalid_request');
+      expect(out.body.message).toContain('backlog, ready, in_progress, blocked');
+      expect(out.body.message).toContain('baton pass --to <column>');
+    }
+    const after = (await s.human.get(`/cards/${card.id}`)).body.card;
+    expect(after.column).toBe('ready');
+    expect(after.claim).toBeNull();
+  });
 });
