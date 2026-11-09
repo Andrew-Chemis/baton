@@ -13,13 +13,17 @@ function midpoint(a: string, b: string | null): string {
   }
   const digitA = a ? DIGITS.indexOf(a[0] as string) : 0;
   const digitB = b !== null ? DIGITS.indexOf(b[0] as string) : DIGITS.length;
+  // Appending steps the digit up by one, so a long column grows a character about every 35 cards, not every 6.
+  if (b === null && a !== '' && digitA + 1 < DIGITS.length) return DIGITS[digitA + 1] as string;
   if (digitB - digitA > 1) return DIGITS[Math.round(0.5 * (digitA + digitB))] as string;
   if (b !== null && b.length > 1) return b.slice(0, 1);
-  return (DIGITS[digitA] as string) + midpoint(a.slice(1), null);
+  const rest = a.slice(1);
+  // A new character at the end of a column starts one step above zero, so it has the whole range to climb.
+  return (DIGITS[digitA] as string) + (b === null && rest === '' ? (DIGITS[1] as string) : midpoint(rest, null));
 }
 
 export const isPos = (value: unknown): value is string =>
-  typeof value === 'string' && /^[0-9a-z]{1,64}$/.test(value) && !value.endsWith(ZERO);
+  typeof value === 'string' && /^[0-9a-z]{1,255}$/.test(value) && !value.endsWith(ZERO);
 
 /** A position strictly after `after` and strictly before `before`; null means the start or the end of the column. */
 export function between(after: string | null, before: string | null): string {
