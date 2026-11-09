@@ -25,6 +25,9 @@ async function git(cwd: string, args: string[]): Promise<string | undefined> {
   }
 }
 
+/** What two project names share when they differ only in case or spacing. Mirrors the service's `nameKey`. */
+export const nameKey = (name: string): string => name.trim().replace(/\s+/g, ' ').toLowerCase();
+
 /** `owner/name`, lower-case, from an origin URL, an scp-style remote or a bare slug. Mirrors the service's rule. */
 export function normalizeRepo(input: string): string {
   let path = input.trim();

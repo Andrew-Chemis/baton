@@ -3,7 +3,7 @@
 import { Api, type Reply } from './api.ts';
 import { flag, flagAll, has, type Parsed, UsageError } from './args.ts';
 import { resolveConfig } from './credentials.ts';
-import { CliError, detectCheckout, notACheckout, stateFile, type Checkout, type Located } from './git.ts';
+import { CliError, detectCheckout, nameKey, notACheckout, stateFile, type Checkout, type Located } from './git.ts';
 import {
   freshState,
   lastBeat,
@@ -116,7 +116,16 @@ export async function resolveCard(ctx: Context, ref: string | undefined): Promis
     }
     return { id: state.held.card, key: state.held.key };
   }
-  if (CARD_ID.test(ref)) return { id: ref, key: null };
+  if (CARD_ID.test(ref)) {
+    // Thirteen lower-case letters and digits is the shape of an id and also of a slug: the board says which it is.
+    const byId = await ctx
+      .get<{ card: { id: string; key: string | null } }>(`/cards/${ref}`)
+      .catch((error: unknown) => {
+        if (error instanceof CliError && error.code === 'not_found') return undefined;
+        throw error;
+      });
+    if (byId) return { id: byId.body.card.id, key: byId.body.card.key };
+  }
   let key = ref;
   const slashes = ref.split('/').length - 1;
   if (slashes === 0) key = `${(await ctx.checkout()).repo}/${ref}`;
@@ -161,7 +170,7 @@ export async function projectRegister(ctx: Context) {
     counts: '0',
   });
   const held = existing.body.projects[0];
-  if (held && held.name.toLowerCase() === name.trim().toLowerCase() && repos.every((r) => held.repos.includes(r))) {
+  if (held && nameKey(held.name) === nameKey(name) && repos.every((r) => held.repos.includes(r))) {
     return { project: held, created: false, added: [] };
   }
   return (await api.post('/projects', { name, repos, ifExists: 'add' })).body;
