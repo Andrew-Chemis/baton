@@ -254,9 +254,14 @@ export async function listEvents(
   id: string,
   since: number,
   limit = 200,
-): Promise<{ events: EventView[]; seq: number }> {
+): Promise<{ events: EventView[]; seq: number; more: boolean }> {
   const card = await loadCard(deps, id);
-  return { events: (await eventsAfter(deps, card, since, limit)).map(toEventView), seq: card.seq };
+  // One extra row says whether the page is the last. `seq` is how far the reader has now read: the last event on a page
+  // that is not the last, the card's sequence once nothing is left.
+  const rows = await eventsAfter(deps, card, since, limit + 1);
+  const more = rows.length > limit;
+  const events = rows.slice(0, limit).map(toEventView);
+  return { events, seq: more ? (events.at(-1)?.seq ?? card.seq) : card.seq, more };
 }
 
 /** Human events after the card's acknowledged sequence, for the claim response. */

@@ -132,7 +132,7 @@ All routes under `/api`. Agent routes take `Authorization: Bearer <token>` and
 | `PATCH /cards/{id}` | both | title, body, links; `edited` event |
 | `POST /cards/{id}/move` | both | `{ to, pos }`; reopen and done rules |
 | `POST /cards/{id}/comments` | both | `commented` event |
-| `GET /cards/{id}/events?since=` | both | events after `since` (Req 3.2) |
+| `GET /cards/{id}/events?since=` | both | events after `since`, at most 200 (Req 3.2); `more` is true when there are further events, and `seq` is then the last event returned, so the next call passes it as `since` (`check` loops on it); once `more` is false `seq` is the card's sequence |
 | `POST /cards/{id}/claim` | agent | conditional claim (Req 1) |
 | `POST /cards/{id}/heartbeat` | agent | extend lease (Req 2.1) |
 | `POST /cards/{id}/ack` | agent | `{ seq }` (Req 3.3) |

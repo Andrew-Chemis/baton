@@ -260,12 +260,22 @@ export async function check(ctx: Context) {
   const detail = await api.get<{ card: { key: string | null; ackedSeq: number; seq: number; unread: boolean } }>(
     `/cards/${card.id}`,
   );
-  const events = await api.get<{
-    events: { seq: number; actor: { kind: string }; type: string }[];
-    seq: number;
-  }>(`/cards/${card.id}/events`, { since: String(detail.body.card.ackedSeq) });
-  const pending = events.body.events.filter((e) => e.actor.kind === 'human' && e.type !== 'created');
-  const seq = Math.max(events.body.seq, ...events.body.events.map((e) => e.seq));
+  // The board returns the events in pages; the sequence recorded as read is where the last page ended.
+  const pending: { seq: number; actor: { kind: string }; type: string }[] = [];
+  let seq = detail.body.card.ackedSeq;
+  for (let more = true; more;) {
+    // oxlint-disable-next-line eslint/no-await-in-loop -- each page starts where the previous one ended
+    const page = await api.get<{
+      events: { seq: number; actor: { kind: string }; type: string }[];
+      seq: number;
+      more?: boolean;
+    }>(`/cards/${card.id}/events`, { since: String(seq) });
+    pending.push(...page.body.events.filter((e) => e.actor.kind === 'human' && e.type !== 'created'));
+    const before = seq;
+    seq = Math.max(seq, page.body.seq, ...page.body.events.map((e) => e.seq));
+    // A page that moved nothing ends the loop however the board answered.
+    more = page.body.more === true && seq > before;
+  }
   try {
     const { path, state } = await ctx.state();
     await writeState(path, { ...state, checked: { ...state.checked, [card.id]: seq } });

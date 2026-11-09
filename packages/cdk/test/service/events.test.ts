@@ -219,3 +219,23 @@ describe('R4 a backward move means the work is not done', () => {
     expect((await s.human.post(`/cards/${b.id}/move`, { to: 'ready', pos: 'No!' })).status).toBe(400);
   });
 });
+
+describe('the event log is read in pages', () => {
+  test('a page stops at 200 events, says there are more, and its seq is the last event it returned', async () => {
+    const card = await newCard(s.human, { title: 'Chatty' });
+    for (let i = 0; i < 205; i += 1) await s.human.post(`/cards/${card.id}/comments`, { text: `Note ${i}` });
+    const first = (await agent.get(`/cards/${card.id}/events?since=0`)).body;
+    expect(first.events).toHaveLength(200);
+    expect(first.more).toBe(true);
+    expect(first.seq).toBe(first.events.at(-1).seq);
+    const rest = (await agent.get(`/cards/${card.id}/events?since=${first.seq}`)).body;
+    expect(rest.events).toHaveLength(6);
+    expect(rest.more).toBe(false);
+    expect(rest.seq).toBe(206);
+    expect((await agent.get(`/cards/${card.id}/events?since=206`)).body).toMatchObject({
+      events: [],
+      more: false,
+      seq: 206,
+    });
+  });
+});
