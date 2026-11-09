@@ -201,6 +201,16 @@ describe('synthesis', () => {
         }),
       }),
     });
+    // The API origin is the host of the API's endpoint, worked out in the template, never the endpoint's full URL.
+    const [distribution] = Object.values(resourcesOf(template, 'AWS::CloudFront::Distribution'));
+    const origins = distribution.Properties.DistributionConfig.Origins as { DomainName: unknown }[];
+    const api = origins.find(
+      (o) => typeof o.DomainName === 'object' && JSON.stringify(o.DomainName).includes('Fn::Split'),
+    );
+    expect(api, 'an origin whose domain is parsed from the API endpoint').toBeDefined();
+    expect(JSON.stringify(api?.DomainName)).not.toContain('https://');
+    expect(Object.keys(api?.DomainName as object)).toEqual(['Fn::Select']);
+    expect(JSON.stringify(api?.DomainName)).toContain('ApiEndpoint');
     template.resourceCountIs('AWS::CloudFront::OriginAccessControl', 1);
     template.resourceCountIs('AWS::CloudFront::Function', 2);
     template.resourceCountIs('AWS::Route53::RecordSet', 2);

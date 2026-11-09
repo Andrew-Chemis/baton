@@ -221,7 +221,8 @@ export class BatonBoard extends Construct {
         certificate: props.certificate,
         hostedZone: props.hostedZone,
         bucket: this.bucket,
-        apiDomainName: this.api.apiEndpoint.replace(/^https:\/\//, ''),
+        // apiEndpoint is a deploy-time token, so a string replace would strip nothing; parse the host out in the template.
+        apiDomainName: Fn.parseDomainName(this.api.apiEndpoint),
         webConfig: {
           apiUrl: '/api',
           cognito: { domain: hostedUi.baseUrl(), clientId: this.userPoolClient.userPoolClientId },
