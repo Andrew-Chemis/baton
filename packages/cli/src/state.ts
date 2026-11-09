@@ -8,9 +8,7 @@ import { dirname } from 'node:path';
 export interface HeldCard {
   card: string;
   key: string | null;
-  repo: string;
   branch: string;
-  takenAt: number;
 }
 
 export interface WorktreeState {
@@ -40,8 +38,7 @@ export const freshState = (env: NodeJS.ProcessEnv): WorktreeState => ({
 });
 
 export async function writeState(path: string, state: WorktreeState): Promise<void> {
-  const entries = Object.entries(state.checked);
-  const trimmed = Object.fromEntries(entries.slice(Math.max(0, entries.length - MAX_CHECKED)));
+  const trimmed = Object.fromEntries(Object.entries(state.checked).slice(-MAX_CHECKED));
   await mkdir(dirname(path), { recursive: true });
   // Write beside the file and rename, so a hook reading while a command writes never sees half a file.
   const temp = `${path}.${process.pid}.${randomBytes(3).toString('hex')}`;

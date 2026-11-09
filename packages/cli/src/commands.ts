@@ -1,21 +1,30 @@
 // The verbs. Each takes parsed arguments and a context, and returns the JSON to print. The board decides everything that
 // matters (who holds a card, whether a pass is allowed); this file only works out where the agent is and what it holds.
-import { Api } from './api.ts';
+import { Api, type Reply } from './api.ts';
 import { flag, flagAll, has, type Parsed, UsageError } from './args.ts';
 import { resolveConfig } from './credentials.ts';
-import { CliError, detectCheckout, stateFile, type Checkout } from './git.ts';
-import { freshState, lastBeat, readState, removeState, stampBeat, writeState, type WorktreeState } from './state.ts';
+import { CliError, detectCheckout, notACheckout, stateFile, type Checkout, type Located } from './git.ts';
+import {
+  freshState,
+  lastBeat,
+  readState,
+  removeState,
+  stampBeat,
+  writeState,
+  type HeldCard,
+  type WorktreeState,
+} from './state.ts';
 
 export interface Io {
   cwd: string;
   env: NodeJS.ProcessEnv;
   stdout: (text: string) => void;
   stderr: (text: string) => void;
-  fetch?: typeof fetch;
-  sleep?: (ms: number) => Promise<void>;
-  now?: () => number;
+  fetch?: typeof fetch | undefined;
+  sleep?: ((ms: number) => Promise<void>) | undefined;
+  now?: (() => number) | undefined;
   /** Pauses between retries of a failed request; tests shorten them. */
-  backoffMs?: number[];
+  backoffMs?: number[] | undefined;
 }
 
 export const HEARTBEAT_MIN_INTERVAL_MS = 60_000;
@@ -25,6 +34,7 @@ export class Context {
   readonly args: Parsed;
   #api: Api | undefined;
   #checkout: Checkout | undefined;
+  #located: Promise<Located | undefined> | undefined;
   constructor(io: Io, args: Parsed) {
     this.io = io;
     this.args = args;
@@ -40,12 +50,20 @@ export class Context {
       this.#api = new Api({
         url,
         token,
-        ...(this.io.fetch ? { fetch: this.io.fetch } : {}),
-        ...(this.io.sleep ? { sleep: this.io.sleep } : {}),
-        ...(this.io.backoffMs ? { backoffMs: this.io.backoffMs } : {}),
+        fetch: this.io.fetch,
+        sleep: this.io.sleep,
+        backoffMs: this.io.backoffMs,
       });
     }
     return this.#api;
+  }
+
+  async get<T = Record<string, any>>(path: string, query?: Record<string, string | undefined>): Promise<Reply<T>> {
+    return (await this.api()).get<T>(path, query);
+  }
+
+  async post<T = Record<string, any>>(path: string, body?: unknown): Promise<Reply<T>> {
+    return (await this.api()).post<T>(path, body);
   }
 
   async checkout(): Promise<Checkout> {
@@ -53,16 +71,26 @@ export class Context {
     return this.#checkout;
   }
 
+  /** The worktree and where it keeps its state; undefined outside a git checkout. Needs no remote. */
+  locate(): Promise<Located | undefined> {
+    this.#located ??= stateFile(this.io.cwd);
+    return this.#located;
+  }
+
+  async located(): Promise<Located> {
+    const found = await this.locate();
+    if (!found) throw notACheckout(this.io.cwd);
+    return found;
+  }
+
+  async worktree(): Promise<string> {
+    return (await this.located()).worktree;
+  }
+
   /** The state file and what it holds, or a fresh state when there is none yet. Needs only a git checkout. */
   async state(): Promise<{ path: string; state: WorktreeState }> {
-    const located = await stateFile(this.io.cwd);
-    if (!located) {
-      throw new CliError(
-        'not_a_checkout',
-        `${this.io.cwd} is not inside a git checkout. Run baton from the repository you are working in.`,
-      );
-    }
-    return { path: located.statePath, state: (await readState(located.statePath)) ?? freshState(this.io.env) };
+    const { statePath } = await this.located();
+    return { path: statePath, state: (await readState(statePath)) ?? freshState(this.io.env) };
   }
 }
 
@@ -95,7 +123,7 @@ export async function resolveCard(ctx: Context, ref: string | undefined): Promis
   else if (slashes !== 2) {
     throw usage(`"${ref}" is not a card: use its id, owner/name/slug, or the slug alone.`);
   }
-  const { body } = await (await ctx.api()).get<{ cards: { id: string; key: string | null }[] }>('/cards', { key });
+  const { body } = await ctx.get<{ cards: { id: string; key: string | null }[] }>('/cards', { key });
   const found = body.cards[0];
   if (!found) {
     throw new CliError('not_found', `No card has the key ${key}. List the repo's cards with \`baton list\`.`, 1);
@@ -104,12 +132,7 @@ export async function resolveCard(ctx: Context, ref: string | undefined): Promis
 }
 
 async function resolveProject(ctx: Context, repo: string): Promise<{ id: string; name: string }> {
-  const { body } = await (
-    await ctx.api()
-  ).get<{ projects: { id: string; name: string }[] }>('/projects', {
-    repo,
-    counts: '0',
-  });
+  const { body } = await ctx.get<{ projects: { id: string; name: string }[] }>('/projects', { repo, counts: '0' });
   const project = body.projects[0];
   if (!project) {
     throw new CliError(
@@ -123,9 +146,12 @@ async function resolveProject(ctx: Context, repo: string): Promise<{ id: string;
 
 const keyOf = (card: CardRef): string => card.key ?? card.id;
 
+export const PROJECT_USAGE = 'Usage: baton project register --name <name> [--repo owner/name]...';
+export const HOOK_USAGE = 'Usage: baton hook heartbeat | baton hook stop';
+
 export async function projectRegister(ctx: Context) {
   const name = flag(ctx.args, 'name');
-  if (!name) throw usage('Usage: baton project register --name <name> [--repo owner/name]...');
+  if (!name) throw usage(PROJECT_USAGE);
   let repos = flagAll(ctx.args, 'repo');
   if (repos.length === 0) repos = [(await ctx.checkout()).repo];
   const api = await ctx.api();
@@ -145,12 +171,7 @@ export async function list(ctx: Context) {
   const { repo } = await ctx.checkout();
   const project = await resolveProject(ctx, repo);
   const column = flag(ctx.args, 'column');
-  const { body } = await (
-    await ctx.api()
-  ).get<{ cards: { column: string; state: string }[] }>('/cards', {
-    repo,
-    column,
-  });
+  const { body } = await ctx.get<{ cards: { column: string; state: string }[] }>('/cards', { repo, column });
   const state = flag(ctx.args, 'state');
   const cards = body.cards.filter(
     (c) => (has(ctx.args, 'all') || column !== undefined || c.column !== 'done') && (!state || c.state === state),
@@ -174,7 +195,7 @@ export async function create(ctx: Context) {
   if (column) payload.column = column;
   if (key) payload.key = key;
   if (links.length > 0) payload.links = links;
-  return (await (await ctx.api()).post('/cards', payload)).body;
+  return (await ctx.post('/cards', payload)).body;
 }
 
 export async function take(ctx: Context) {
@@ -192,22 +213,13 @@ export async function take(ctx: Context) {
   };
   // A card taken from Backlog or Ready moves to In progress; one already further along stays where it is.
   if (!has(ctx.args, 'no-move')) payload.to = flag(ctx.args, 'to') ?? 'in_progress';
-  const { body } = await (
-    await ctx.api()
-  ).post<{ card: { id: string; key: string | null }; warnings: unknown[] }>(`/cards/${card.id}/claim`, payload);
+  const { body } = await ctx.post<{ card: { id: string; key: string | null }; warnings: unknown[] }>(
+    `/cards/${card.id}/claim`,
+    payload,
+  );
   const previous = state.held;
-  const now = ctx.now();
-  await writeState(path, {
-    ...state,
-    held: {
-      card: body.card.id,
-      key: body.card.key,
-      repo: checkout.repo,
-      branch: checkout.branch,
-      takenAt: now,
-    },
-  });
-  await stampBeat(path, now);
+  await writeState(path, { ...state, held: { card: body.card.id, key: body.card.key, branch: checkout.branch } });
+  await stampBeat(path, ctx.now());
   if (previous && previous.card !== body.card.id) {
     body.warnings.push({
       code: 'second_card',
@@ -217,20 +229,24 @@ export async function take(ctx: Context) {
   return body;
 }
 
+/** Extends the lease of `cardId`, and restarts the minute the heartbeat hook waits when this worktree holds it. */
+async function beat(ctx: Context, cardId: string) {
+  const { body } = await ctx.post(`/cards/${cardId}/heartbeat`, { worktree: await ctx.worktree() });
+  const { path, state } = await ctx.state();
+  if (state.held?.card === cardId) await stampBeat(path, ctx.now());
+  return body;
+}
+
 export async function heartbeat(ctx: Context) {
   const card = await resolveCard(ctx, ctx.args.positional[0]);
-  const checkout = await ctx.checkout();
-  const { body } = await (await ctx.api()).post(`/cards/${card.id}/heartbeat`, { worktree: checkout.worktree });
-  const { path, state } = await ctx.state();
-  if (state.held?.card === card.id) await stampBeat(path, ctx.now());
-  return body;
+  return beat(ctx, card.id);
 }
 
 export async function check(ctx: Context) {
   const ref = ctx.args.positional[0];
   const api = await ctx.api();
   if (ref === undefined) {
-    // What needs this agent: the cards it was last on that have human activity it has not acknowledged, and its stale claims.
+    // What needs this agent: the cards it was last on that a human has written to since it last acknowledged, or moved back.
     const { body } = await api.get('/cards', { attention: 'me' });
     return body;
   }
@@ -264,14 +280,12 @@ export async function check(ctx: Context) {
 export async function ack(ctx: Context) {
   const card = await resolveCard(ctx, ctx.args.positional[0]);
   const given = flag(ctx.args, 'seq');
-  let seq: number | undefined = given === undefined ? undefined : Number(given);
-  if (seq === undefined) {
-    try {
-      seq = (await ctx.state()).state.checked[card.id];
-    } catch {
-      seq = undefined;
-    }
-  }
+  let seq = given === undefined ? undefined : Number(given);
+  seq ??= await ctx.state().then(
+    ({ state }) => state.checked[card.id],
+    // Not in a checkout: nothing was recorded, so only --seq can say what was read.
+    () => undefined,
+  );
   if (seq === undefined || !Number.isInteger(seq) || seq < 0) {
     throw new CliError(
       'nothing_checked',
@@ -279,7 +293,7 @@ export async function ack(ctx: Context) {
       1,
     );
   }
-  return (await (await ctx.api()).post(`/cards/${card.id}/ack`, { seq })).body;
+  return (await ctx.post(`/cards/${card.id}/ack`, { seq })).body;
 }
 
 export async function comment(ctx: Context) {
@@ -291,25 +305,23 @@ export async function comment(ctx: Context) {
     throw usage('Usage: baton comment <card> <text...>   or   baton comment [<card>] --text <text>');
   }
   const card = await resolveCard(ctx, ref);
-  return (await (await ctx.api()).post(`/cards/${card.id}/comments`, { text })).body;
+  return (await ctx.post(`/cards/${card.id}/comments`, { text })).body;
 }
 
 export async function move(ctx: Context) {
   const to = flag(ctx.args, 'to');
   if (!to) throw usage('Usage: baton move <card> --to <column>');
   const card = await resolveCard(ctx, ctx.args.positional[0]);
-  const checkout = await ctx.checkout();
-  return (await (await ctx.api()).post(`/cards/${card.id}/move`, { to, worktree: checkout.worktree })).body;
+  return (await ctx.post(`/cards/${card.id}/move`, { to, worktree: await ctx.worktree() })).body;
 }
 
 async function release(ctx: Context, reason: string, to: string | undefined) {
   const card = await resolveCard(ctx, ctx.args.positional[0]);
-  const checkout = await ctx.checkout();
-  const payload: Record<string, unknown> = { worktree: checkout.worktree, reason };
+  const payload: Record<string, unknown> = { worktree: await ctx.worktree(), reason };
   if (to) payload.to = to;
   const note = flag(ctx.args, 'comment');
   if (note) payload.comment = note;
-  const { body } = await (await ctx.api()).post(`/cards/${card.id}/release`, payload);
+  const { body } = await ctx.post(`/cards/${card.id}/release`, payload);
   const { path, state } = await ctx.state();
   if (state.held?.card === card.id) await writeState(path, { ...state, held: null });
   return body;
@@ -327,53 +339,62 @@ export function drop(ctx: Context) {
   return release(ctx, reason, undefined);
 }
 
+/** A card the board no longer lets this agent hold: taken over, or gone. */
+const lostCard = (error: unknown): error is CliError =>
+  error instanceof CliError && (error.code === 'not_holder' || error.code === 'not_found');
+
+interface HookRun {
+  statePath: string;
+  state: WorktreeState;
+  held: HeldCard;
+}
+
 /** Runs from the hooks: never throws, because a hook that fails must not disturb the session it watches. */
-export async function hook(ctx: Context): Promise<unknown> {
-  const which = ctx.args.positional[0];
-  if (which !== 'heartbeat' && which !== 'stop') throw usage('Usage: baton hook heartbeat | baton hook stop');
+async function runHook(name: string, ctx: Context, body: (run: HookRun) => Promise<unknown>): Promise<unknown> {
   try {
-    const located = await stateFile(ctx.io.cwd);
+    const located = await ctx.locate();
     if (!located) return undefined;
     const state = await readState(located.statePath);
-    const held = state?.held;
-    if (!state || !held) return undefined;
-    if (which === 'heartbeat') {
-      const now = ctx.now();
-      const last = await lastBeat(located.statePath);
-      if (last !== undefined && now - last < HEARTBEAT_MIN_INTERVAL_MS) return undefined;
-      // Claim the minute before sending, so parallel tool calls in one burst send one heartbeat.
-      await stampBeat(located.statePath, now);
-      try {
-        const { body } = await (await ctx.api()).post(`/cards/${held.card}/heartbeat`, { worktree: located.worktree });
-        return body;
-      } catch (error) {
-        if (error instanceof CliError && (error.code === 'not_holder' || error.code === 'not_found')) {
-          await writeState(located.statePath, { ...state, held: null });
-          ctx.io.stderr(`baton: ${error.message}\n`);
-        }
-        throw error;
-      }
-    }
-    const note = `Session ended while this card was held (branch ${held.branch}). The stop hook released it, so the work may be unfinished: check the branch before taking it up.`;
-    try {
-      const { body } = await (
-        await ctx.api()
-      ).post(`/cards/${held.card}/release`, {
-        worktree: located.worktree,
-        reason: 'session_ended',
-        comment: note,
-      });
-      await removeState(located.statePath);
-      return body;
-    } catch (error) {
-      // Lost the card already, or it is gone: there is nothing left to release.
-      if (error instanceof CliError && (error.code === 'not_holder' || error.code === 'not_found')) {
-        await removeState(located.statePath);
-      }
-      throw error;
-    }
+    if (!state?.held) return undefined;
+    return await body({ statePath: located.statePath, state, held: state.held });
   } catch (error) {
-    ctx.io.stderr(`baton hook ${which}: ${error instanceof Error ? error.message : String(error)}\n`);
+    ctx.io.stderr(`baton hook ${name}: ${error instanceof Error ? error.message : String(error)}\n`);
     return undefined;
   }
 }
+
+export const hookHeartbeat = (ctx: Context): Promise<unknown> =>
+  runHook('heartbeat', ctx, async ({ statePath, state, held }) => {
+    const now = ctx.now();
+    const last = await lastBeat(statePath);
+    if (last !== undefined && now - last < HEARTBEAT_MIN_INTERVAL_MS) return undefined;
+    // Claim the minute before sending, so parallel tool calls in one burst send one heartbeat.
+    await stampBeat(statePath, now);
+    try {
+      return await beat(ctx, held.card);
+    } catch (error) {
+      if (lostCard(error)) {
+        await writeState(statePath, { ...state, held: null });
+        ctx.io.stderr(`baton: ${error.message}\n`);
+      }
+      throw error;
+    }
+  });
+
+export const hookStop = (ctx: Context): Promise<unknown> =>
+  runHook('stop', ctx, async ({ statePath, held }) => {
+    const note = `Session ended while this card was held (branch ${held.branch}). The stop hook released it, so the work may be unfinished: check the branch before taking it up.`;
+    try {
+      const { body } = await ctx.post(`/cards/${held.card}/release`, {
+        worktree: await ctx.worktree(),
+        reason: 'session_ended',
+        comment: note,
+      });
+      await removeState(statePath);
+      return body;
+    } catch (error) {
+      // Lost the card already, or it is gone: there is nothing left to release.
+      if (lostCard(error)) await removeState(statePath);
+      throw error;
+    }
+  });

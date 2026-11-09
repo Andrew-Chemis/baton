@@ -20,10 +20,10 @@ export class BoardError extends CliError {
 export interface ApiOptions {
   url: string;
   token: string;
-  fetch?: typeof fetch;
-  sleep?: (ms: number) => Promise<void>;
+  fetch?: typeof fetch | undefined;
+  sleep?: ((ms: number) => Promise<void>) | undefined;
   /** Pauses between attempts; one more attempt per entry. */
-  backoffMs?: number[];
+  backoffMs?: number[] | undefined;
 }
 
 export interface Reply<T = Record<string, any>> {

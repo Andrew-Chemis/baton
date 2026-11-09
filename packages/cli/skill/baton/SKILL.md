@@ -11,7 +11,7 @@ A board of cards with one owner at a time. You take a card before you edit, huma
 
 ## The loop
 
-1. `baton check` first. It lists cards you were last on that need you: human comments you have not acknowledged, or a lease that went stale. Deal with those before new work.
+1. `baton check` first. It lists cards you were last on that need you: human comments you have not acknowledged, or a card a human moved back. Deal with those before new work.
 2. `baton list` shows this repo's open cards. Pick one, or `baton create --title "..."` if the work has no card.
 3. `baton take <card>` before you touch a file. The card is its id, `owner/name/slug`, or the slug. If it answers `claim_held`, someone else is on it: pick another card and do not edit for this one.
 4. Read `pending` in the answer. Those are human comments and edits since you last acknowledged; they outrank the card text.

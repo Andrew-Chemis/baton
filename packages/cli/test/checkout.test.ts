@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { normalizeRepo } from '../src/git.ts';
 import { REPO, startWorld, type World } from './harness.ts';
+import { REPO_URLS } from './repo-urls.ts';
 
 let w: World;
 beforeAll(async () => {
@@ -18,15 +19,7 @@ afterAll(async () => w.close());
 const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
 
 describe('normalizeRepo', () => {
-  test.each([
-    ['https://github.com/Acme/Widgets.git', 'acme/widgets'],
-    ['https://github.com/acme/widgets', 'acme/widgets'],
-    ['git@github.com:Acme/Widgets.git', 'acme/widgets'],
-    ['ssh://git@github.com/acme/widgets.git/', 'acme/widgets'],
-    ['https://x-access-token:secret@github.com/acme/widgets.git', 'acme/widgets'],
-    ['http://local_proxy@127.0.0.1:9999/git/acme/widgets', 'acme/widgets'],
-    ['acme/widgets', 'acme/widgets'],
-  ])('%s', (input, expected) => {
+  test.each(REPO_URLS)('%s', (input, expected) => {
     expect(normalizeRepo(input)).toBe(expected);
   });
 });

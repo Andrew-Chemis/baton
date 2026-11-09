@@ -18,8 +18,6 @@ const run = promisify(execFile);
 export interface Resolved {
   url: string;
   token: string;
-  /** Where the token came from, for `baton --debug` style questions; never printed with the token. */
-  tokenSource: 'env' | 'ssm';
 }
 
 export const DEFAULT_TOKEN_PARAM = '/baton/agent-token';
@@ -137,11 +135,7 @@ async function ssm(name: string, env: NodeJS.ProcessEnv): Promise<string | undef
 export async function resolveConfig(env: NodeJS.ProcessEnv): Promise<Resolved> {
   let url = env.BATON_URL;
   let token = env.BATON_TOKEN;
-  let tokenSource: Resolved['tokenSource'] = 'env';
-  if (!token) {
-    token = await ssm(env.BATON_SSM_TOKEN_PARAM ?? DEFAULT_TOKEN_PARAM, env);
-    tokenSource = 'ssm';
-  }
+  token ||= await ssm(env.BATON_SSM_TOKEN_PARAM ?? DEFAULT_TOKEN_PARAM, env);
   if (!token) {
     throw new CliError(
       'no_token',
@@ -155,5 +149,5 @@ export async function resolveConfig(env: NodeJS.ProcessEnv): Promise<Resolved> {
       "No board address. Set BATON_URL to the board's https address, or store it in the SSM parameter /baton/url.",
     );
   }
-  return { url: url.replace(/\/+$/, ''), token, tokenSource };
+  return { url: url.replace(/\/+$/, ''), token };
 }

@@ -1,7 +1,7 @@
 // A real board for CLI tests: the Lambda's router over a real table in DynamoDB Local, behind a local HTTP server, with a
 // git checkout the CLI can detect. The CLI runs in-process through run(), with the real fetch, against that server.
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { newBoard, type Board } from '../../cdk/test/support/board.ts';
@@ -28,7 +28,6 @@ export interface World {
   env: Record<string, string>;
   token: string;
   agentId: string;
-  dirs: string[];
   /** A fresh clone-like checkout: git init, an origin remote, one commit. */
   repo: (remote?: string | null) => string;
   /** A linked worktree of `main`, on its own branch. */
@@ -47,7 +46,7 @@ const git = (cwd: string, ...args: string[]) =>
     stdio: 'pipe',
   });
 
-export async function startWorld(options: { clock?: boolean } = {}): Promise<World> {
+export async function startWorld(): Promise<World> {
   const board = await newBoard();
   const server = await startLocalServer({ deps: board.deps });
   const human = board.as({ human: 'owner@example.test' });
@@ -57,7 +56,6 @@ export async function startWorld(options: { clock?: boolean } = {}): Promise<Wor
   const issued = await human.post(`/agents/${created.body.agent.id}/tokens`, { label: 'cli tests' });
   const token = issued.body.token as string;
   const dirs: string[] = [];
-  void options;
 
   const world: World = {
     board,
@@ -65,7 +63,6 @@ export async function startWorld(options: { clock?: boolean } = {}): Promise<Wor
     env: { BATON_URL: server.url, BATON_TOKEN: token },
     token,
     agentId: created.body.agent.id as string,
-    dirs,
     repo(remote = REMOTE) {
       const dir = realpathSync(mkdtempSync(join(tmpdir(), 'baton-repo-')));
       dirs.push(dir);
@@ -97,8 +94,8 @@ export async function startWorld(options: { clock?: boolean } = {}): Promise<Wor
         env,
         stdout: (t) => void (stdout += t),
         stderr: (t) => void (stderr += t),
-        ...(opts.fetch ? { fetch: opts.fetch } : {}),
-        ...(opts.now ? { now: opts.now } : {}),
+        fetch: opts.fetch,
+        now: opts.now,
         backoffMs: [1, 1, 1],
       });
       const parse = (s: string) => {
@@ -116,11 +113,4 @@ export async function startWorld(options: { clock?: boolean } = {}): Promise<Wor
     },
   };
   return world;
-}
-
-export function writeFile(dir: string, name: string, text: string): string {
-  const file = join(dir, name);
-  mkdirSync(join(file, '..'), { recursive: true });
-  writeFileSync(file, text);
-  return file;
 }

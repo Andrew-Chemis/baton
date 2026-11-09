@@ -30,7 +30,10 @@ Every command prints JSON: the result on stdout, or {"error":{"code","message",.
 Environment: BATON_URL, BATON_TOKEN (else SSM /baton/agent-token and /baton/url when AWS credentials exist).
 `;
 
-const VERBS: Record<string, (ctx: Context) => unknown> = {
+type Verb = (ctx: Context) => unknown;
+
+/** What each command word runs. A word with subcommands of its own maps them one level down, with the usage a wrong one gets. */
+const COMMANDS: Record<string, Verb | { usage: string; run: Record<string, Verb> }> = {
   list: commands.list,
   create: commands.create,
   take: commands.take,
@@ -41,23 +44,36 @@ const VERBS: Record<string, (ctx: Context) => unknown> = {
   move: commands.move,
   pass: commands.pass,
   drop: commands.drop,
-  hook: commands.hook,
+  project: { usage: commands.PROJECT_USAGE, run: { register: commands.projectRegister } },
+  hook: { usage: commands.HOOK_USAGE, run: { heartbeat: commands.hookHeartbeat, stop: commands.hookStop } },
 };
+
+function pick(verb: string, rest: string[]): { handler: Verb; positional: string[] } {
+  const found = COMMANDS[verb];
+  if (!found) throw new UsageError(`Unknown command "${verb}".`);
+  if (typeof found === 'function') return { handler: found, positional: rest };
+  const [sub, ...tail] = rest;
+  const handler = sub === undefined ? undefined : found.run[sub];
+  if (!handler) throw new UsageError(found.usage);
+  return { handler, positional: tail };
+}
+
+const printError = (io: Io, error: Record<string, unknown>): void =>
+  io.stderr(`${JSON.stringify({ error }, null, 2)}\n`);
 
 function fail(io: Io, error: unknown): number {
   if (error instanceof UsageError) {
-    io.stderr(
-      `${JSON.stringify({ error: { code: 'usage', message: `${error.message} Run \`baton --help\` for the commands.` } }, null, 2)}\n`,
-    );
+    printError(io, { code: 'usage', message: `${error.message} Run \`baton --help\` for the commands.` });
     return 2;
   }
   if (error instanceof CliError) {
-    io.stderr(`${JSON.stringify({ error: { ...error.extra, code: error.code, message: error.message } }, null, 2)}\n`);
+    printError(io, { ...error.extra, code: error.code, message: error.message });
     return error.exit;
   }
-  io.stderr(
-    `${JSON.stringify({ error: { code: 'internal', message: `Unexpected failure: ${error instanceof Error ? error.message : String(error)}. Repeat the command; if it persists, report it with this message.` } }, null, 2)}\n`,
-  );
+  printError(io, {
+    code: 'internal',
+    message: `Unexpected failure: ${error instanceof Error ? error.message : String(error)}. Repeat the command; if it persists, report it with this message.`,
+  });
   return 1;
 }
 
@@ -73,17 +89,8 @@ export async function run(argv: string[], io: Io): Promise<number> {
       io.stdout(HELP);
       return verb || args.flags.has('help') ? 0 : 2;
     }
-    let result: unknown;
-    if (verb === 'project') {
-      const [sub, ...tail] = rest;
-      if (sub !== 'register')
-        throw new UsageError('Usage: baton project register --name <name> [--repo owner/name]...');
-      result = await commands.projectRegister(new Context(io, { ...args, positional: tail }));
-    } else {
-      const handler = VERBS[verb];
-      if (!handler) throw new UsageError(`Unknown command "${verb}".`);
-      result = await handler(new Context(io, { ...args, positional: rest }));
-    }
+    const { handler, positional } = pick(verb, rest);
+    const result = await handler(new Context(io, { ...args, positional }));
     // A hook has nothing to say when it did nothing.
     if (result !== undefined) io.stdout(`${JSON.stringify(result, null, 2)}\n`);
     return 0;

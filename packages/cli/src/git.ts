@@ -44,18 +44,17 @@ export interface Checkout {
   /** Absolute path of the working tree. */
   worktree: string;
   branch: string;
-  /** Where this worktree keeps the card it holds. Linked worktrees each have their own. */
-  statePath: string;
 }
+
+export const notACheckout = (cwd: string): CliError =>
+  new CliError(
+    'not_a_checkout',
+    `${cwd} is not inside a git checkout. Run baton from the repository you are working in.`,
+  );
 
 export async function detectCheckout(cwd: string, env: NodeJS.ProcessEnv = process.env): Promise<Checkout> {
   const worktree = await git(cwd, ['rev-parse', '--show-toplevel']);
-  if (!worktree) {
-    throw new CliError(
-      'not_a_checkout',
-      `${cwd} is not inside a git checkout. Run baton from the repository you are working in.`,
-    );
-  }
+  if (!worktree) throw notACheckout(cwd);
   let remote = env.BATON_REPO ?? (await git(cwd, ['remote', 'get-url', 'origin']));
   if (!remote) {
     const first = (await git(cwd, ['remote']))?.split('\n')[0];
@@ -72,14 +71,17 @@ export async function detectCheckout(cwd: string, env: NodeJS.ProcessEnv = proce
     const sha = await git(cwd, ['rev-parse', '--short', 'HEAD']);
     branch = sha ? `detached-${sha}` : 'unborn';
   }
-  const statePath =
-    (await git(cwd, ['rev-parse', '--path-format=absolute', '--git-path', 'baton-card'])) ??
-    `${worktree}/.git/baton-card`;
-  return { repo: normalizeRepo(remote), worktree, branch, statePath };
+  return { repo: normalizeRepo(remote), worktree, branch };
 }
 
-/** The state path alone, for the hooks, which must not need a remote. */
-export async function stateFile(cwd: string): Promise<{ statePath: string; worktree: string } | undefined> {
+/** Where this worktree keeps the card it holds (linked worktrees each have their own), and the worktree itself. */
+export interface Located {
+  statePath: string;
+  worktree: string;
+}
+
+/** What the hooks and the verbs that only name a worktree need from git: no remote required. */
+export async function stateFile(cwd: string): Promise<Located | undefined> {
   const worktree = await git(cwd, ['rev-parse', '--show-toplevel']);
   const statePath = await git(cwd, ['rev-parse', '--path-format=absolute', '--git-path', 'baton-card']);
   return worktree && statePath ? { statePath, worktree } : undefined;
