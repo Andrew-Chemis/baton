@@ -83,7 +83,6 @@ export async function createCard(deps: Deps, ctx: RequestCtx, input: unknown): P
     ]);
     if (!mapped) {
       throw new ApiError(
-        409,
         'repo_unregistered',
         `Repo ${repo} belongs to no project, so a card cannot be created for it. Register it: run \`baton project register --name <project>\` from a checkout of the repo, or use the dashboard's register form.`,
       );

@@ -60,7 +60,6 @@ async function replayOf(deps: Deps, ctx: RequestCtx, now: number): Promise<Reply
   if (!stored || stored.expiresAt <= now) return undefined;
   if (stored.fingerprint !== ctx.idem.fingerprint) {
     throw new ApiError(
-      422,
       'idempotent_replay',
       'This Idempotency-Key was already used for a different request within the last 24 hours. Send a new key for a new request, or repeat the original request unchanged to get its first response again.',
     );
@@ -118,7 +117,6 @@ export async function execute(deps: Deps, ctx: RequestCtx, build: (now: number) 
   }
   /* oxlint-enable eslint/no-await-in-loop */
   throw new ApiError(
-    409,
     'conflict',
     'The board was changing too fast to apply this write. Repeat the request; it is safe to retry with the same Idempotency-Key.',
   );

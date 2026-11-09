@@ -1,24 +1,45 @@
 import type { ApiErrorBody, CardView, ClaimView, ErrorCode } from './api-types.ts';
 
+/** Every error code answers with one status, so a throw site names the code and nothing else. */
+const ERROR_STATUS: Record<ErrorCode, number> = {
+  invalid_request: 400,
+  missing_worktree: 400,
+  unauthorized: 401,
+  token_revoked: 401,
+  forbidden: 403,
+  not_found: 404,
+  claim_held: 409,
+  not_holder: 409,
+  seq_ahead: 409,
+  unacked_comments: 409,
+  repo_mismatch: 409,
+  repo_unregistered: 409,
+  repo_taken: 409,
+  name_taken: 409,
+  project_has_claims: 409,
+  conflict: 409,
+  idempotent_replay: 422,
+  internal: 500,
+};
+
 export class ApiError extends Error {
   readonly status: number;
   readonly body: ApiErrorBody;
 
-  constructor(status: number, code: ErrorCode, message: string, extra: Omit<ApiErrorBody, 'code' | 'message'> = {}) {
+  constructor(code: ErrorCode, message: string, extra: Omit<ApiErrorBody, 'code' | 'message'> = {}) {
     super(message);
-    this.status = status;
+    this.status = ERROR_STATUS[code];
     this.body = { code, message, ...extra };
   }
 }
 
-export const badRequest = (message: string) => new ApiError(400, 'invalid_request', message);
-export const notFound = (message: string) => new ApiError(404, 'not_found', message);
-export const unauthorized = (message: string) => new ApiError(401, 'unauthorized', message);
-export const forbidden = (message: string) => new ApiError(403, 'forbidden', message);
+export const badRequest = (message: string) => new ApiError('invalid_request', message);
+export const notFound = (message: string) => new ApiError('not_found', message);
+export const unauthorized = (message: string) => new ApiError('unauthorized', message);
+export const forbidden = (message: string) => new ApiError('forbidden', message);
 
 export const claimHeld = (card: CardView, claim: ClaimView) =>
   new ApiError(
-    409,
     'claim_held',
     `Card ${card.key ?? card.id} is held by ${claim.agentId} in ${claim.worktree} on branch ${claim.branch}, last heard ${new Date(claim.heartbeatAt).toISOString()}. ` +
       'Pick another card with `baton list`, or wait until the lease ends and the card shows as stale, then take it.',
@@ -27,7 +48,6 @@ export const claimHeld = (card: CardView, claim: ClaimView) =>
 
 export const notHolder = (card: CardView, what: string) =>
   new ApiError(
-    409,
     'not_holder',
     `You do not hold card ${card.key ?? card.id}, so you cannot ${what}. ` +
       (card.claim

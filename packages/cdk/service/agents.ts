@@ -79,7 +79,6 @@ export function createAgent(deps: Deps, ctx: RequestCtx, input: unknown): Promis
       classify: (c) =>
         c.failed(0)
           ? new ApiError(
-              409,
               'name_taken',
               `An agent identity "${id}" already exists. Pick another name, or add a token to that agent.`,
             )

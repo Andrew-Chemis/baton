@@ -141,7 +141,6 @@ function resolveActor(event: HttpEvent, kind: ActorKind): Actor {
   const context = event.requestContext.authorizer?.lambda;
   if (context?.verdict === 'revoked') {
     throw new ApiError(
-      401,
       'token_revoked',
       'This token was revoked. Ask the human to issue a new one on the Agents page, then set BATON_TOKEN.',
     );

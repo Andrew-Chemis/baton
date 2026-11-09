@@ -76,7 +76,6 @@ function agentWorktree(
   const worktree = typeof body.worktree === 'string' ? body.worktree.trim() : '';
   if (!worktree) {
     throw new ApiError(
-      400,
       'missing_worktree',
       'worktree is required: send the absolute path of your git checkout (the CLI reads it from `git rev-parse --show-toplevel`).',
     );
@@ -90,7 +89,6 @@ export async function claimCard(deps: Deps, ctx: RequestCtx, id: string, input: 
   const missing = ['repo', 'worktree', 'branch'].filter((f) => typeof body[f] !== 'string' || body[f].trim() === '');
   if (missing.length > 0) {
     throw new ApiError(
-      400,
       'missing_worktree',
       `A claim records where the work happens, so ${missing.join(', ')} ${missing.length > 1 ? 'are' : 'is'} required. Run from a git checkout: the CLI reads repo from the origin URL, worktree from \`git rev-parse --show-toplevel\` and branch from \`git rev-parse --abbrev-ref HEAD\`.`,
     );
@@ -119,7 +117,6 @@ async function planClaim(deps: Deps, card: CardItem, now: number, a: ClaimArgs):
   const { leaseMs } = deps.config;
   if (card.repo !== a.repo) {
     throw new ApiError(
-      409,
       'repo_mismatch',
       `Card ${card.key ?? card.id} belongs to ${card.repo}, but this checkout is ${a.repo}. Take cards for this repo with \`baton list\`, or run the command from a checkout of ${card.repo}.`,
     );
@@ -233,7 +230,6 @@ export async function ackCard(deps: Deps, ctx: RequestCtx, id: string, input: un
     const view = toCardView(card, now, false);
     if (card.lastAgentId !== agentId) {
       throw new ApiError(
-        409,
         'not_holder',
         card.lastAgentId
           ? `Only the agent that last held card ${card.key ?? card.id} (${card.lastAgentId}) can acknowledge it.`
@@ -243,7 +239,6 @@ export async function ackCard(deps: Deps, ctx: RequestCtx, id: string, input: un
     }
     if (seq > card.seq) {
       throw new ApiError(
-        409,
         'seq_ahead',
         `Card ${card.key ?? card.id} is at sequence ${card.seq}; you tried to acknowledge ${seq}. Run \`baton check ${card.key ?? card.id}\` and acknowledge the sequence it reports.`,
         { card: view, seq: card.seq },
@@ -265,7 +260,6 @@ export async function ackCard(deps: Deps, ctx: RequestCtx, id: string, input: un
 
 function unacked(card: CardItem, now: number, to: string): ApiError {
   return new ApiError(
-    409,
     'unacked_comments',
     `Card ${card.key ?? card.id} has human activity up to sequence ${card.lastHumanSeq} that you have not acknowledged (you are at ${card.ackedSeq}), so it cannot go to ${to}. ` +
       `Run \`baton check ${card.key ?? card.id}\`, read and answer it, run \`baton ack ${card.key ?? card.id}\`, then try again.`,

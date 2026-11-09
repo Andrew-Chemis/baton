@@ -124,7 +124,6 @@ const repoTaken = async (deps: Deps, repo: string): Promise<ApiError> => {
   const mapped = await getItem<RepoItem>(deps, repoKey(repo));
   const holder = mapped ? await getItem<ProjectItem>(deps, projectKey(mapped.projectId)) : undefined;
   return new ApiError(
-    409,
     'repo_taken',
     holder
       ? `Repo ${repo} already belongs to project "${holder.name}". Use that project (its board is at /p/${holder.id}), or remove the repo from it first.`
@@ -135,7 +134,6 @@ const repoTaken = async (deps: Deps, repo: string): Promise<ApiError> => {
 
 const nameTaken = (holder: { id: string; name: string }) =>
   new ApiError(
-    409,
     'name_taken',
     `A project named "${holder.name}" already exists (/p/${holder.id}). Pick another name, or add repos to that one.`,
     {
@@ -298,7 +296,6 @@ export async function archiveProject(deps: Deps, ctx: RequestCtx, id: string): P
     if (claimed.length > 0) {
       const first = claimed[0] as CardItem;
       throw new ApiError(
-        409,
         'project_has_claims',
         `Project "${project.name}" has ${claimed.length} claimed card(s), for example ${first.key ?? first.title} held by ${first.claim?.agentId}. ` +
           'Wait for those agents to pass or drop them, or for their leases to expire, then archive again.',
