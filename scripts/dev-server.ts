@@ -4,6 +4,7 @@
 // Build the web app first: pnpm --filter @andrewchemis/baton-cdk run build:assets
 import { randomBytes } from 'node:crypto';
 import { resolve } from 'node:path';
+import { configFor } from '../packages/cdk/service/config.ts';
 import { createDocClient, type Deps } from '../packages/cdk/service/store.ts';
 import { createTable } from '../packages/cdk/test/support/table.ts';
 import { startLocalServer } from '../packages/cdk/test/support/local-server.ts';
@@ -164,7 +165,7 @@ if (import.meta.main) {
   const clock = makeShiftClock();
   const deps: Deps = {
     db: createDocClient({ endpoint, region, credentials }),
-    config: { table, leaseMs: 10 * MINUTE, heartbeatSeconds: 60 },
+    config: configFor(table),
     now: clock.now,
   };
   const server = await startLocalServer({ deps, port, webRoot: web });

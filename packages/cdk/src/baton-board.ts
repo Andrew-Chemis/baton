@@ -17,7 +17,19 @@ import * as s3 from 'aws-cdk-lib/aws-s3';
 import { Construct } from 'constructs';
 import { API_ASSET_PATH } from './assets.js';
 import { BatonDistribution, type FlatRatePlan } from './baton-distribution.js';
-import { AGENT_PREFIX, GSI1, GSI2, GSI3, HUMAN_PREFIX, TABLE_KEYS, TTL_ATTRIBUTE } from './schema.js';
+import {
+  AGENT_PREFIX,
+  GSI1,
+  GSI2,
+  GSI3,
+  HEARTBEAT_SECONDS_DEFAULT,
+  HUMAN_PREFIX,
+  LEASE_MINUTES_DEFAULT,
+  TABLE_KEYS,
+  TIMING_ENV,
+  TTL_ATTRIBUTE,
+  timingProblem,
+} from './schema.js';
 
 export interface BatonBoardProps {
   /** The name the board is served on, e.g. baton.example.com. It is also the Cognito callback origin. */
@@ -63,10 +75,10 @@ export class BatonBoard extends Construct {
     super(scope, id);
     const prefix = props.resourcePrefix ?? 'baton';
     const protect = props.protectData ?? true;
-    const leaseMinutes = props.leaseMinutes ?? 10;
-    const heartbeatSeconds = props.heartbeatSeconds ?? 60;
-    if (heartbeatSeconds >= leaseMinutes * 60)
-      throw new Error('BatonBoard: heartbeatSeconds must be shorter than the lease');
+    const leaseMinutes = props.leaseMinutes ?? LEASE_MINUTES_DEFAULT;
+    const heartbeatSeconds = props.heartbeatSeconds ?? HEARTBEAT_SECONDS_DEFAULT;
+    const timing = timingProblem(leaseMinutes, heartbeatSeconds);
+    if (timing) throw new Error(`BatonBoard: ${timing}`);
     if (Boolean(props.certificate) !== Boolean(props.hostedZone)) {
       throw new Error(
         'BatonBoard: certificate and hostedZone go together; give both for the CloudFront edge, or neither',
@@ -151,8 +163,8 @@ export class BatonBoard extends Construct {
       logGroup,
       environment: {
         BATON_TABLE: this.table.tableName,
-        BATON_LEASE_MINUTES: String(leaseMinutes),
-        BATON_HEARTBEAT_SECONDS: String(heartbeatSeconds),
+        [TIMING_ENV.leaseMinutes]: String(leaseMinutes),
+        [TIMING_ENV.heartbeatSeconds]: String(heartbeatSeconds),
       },
     });
     // The actions DynamoDB checks for the calls and transactions the service makes, on the table and its indexes, and no more.

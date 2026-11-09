@@ -7,6 +7,7 @@ import { AGENT_PREFIX, HUMAN_PREFIX } from '../src/schema.ts';
 import type { Actor, ActorKind } from './api-types.ts';
 import { COLUMNS } from './api-types.ts';
 import { createAgent, createToken, deleteAgent, listAgents, revokeToken, verifyToken } from './agents.ts';
+import { timingOf } from './config.ts';
 import { archiveCard, commentCard, createCard, getCard, listCards, listEvents, patchCard } from './cards.ts';
 import { ackCard, claimCard, heartbeatCard, moveCard, releaseCard } from './claims.ts';
 import { idempotencyOf, type Reply, type RequestCtx } from './engine.ts';
@@ -67,13 +68,7 @@ const route = (method: string, path: string, who: Who, run: Route['run']): Route
 });
 
 const ROUTES: Route[] = [
-  route('GET', '/config', 'both', ({ deps }) =>
-    ok({
-      leaseSeconds: Math.round(deps.config.leaseMs / 1000),
-      heartbeatSeconds: deps.config.heartbeatSeconds,
-      columns: COLUMNS,
-    }),
-  ),
+  route('GET', '/config', 'both', ({ deps }) => ok({ ...timingOf(deps.config), columns: COLUMNS })),
   route('GET', '/projects', 'both', async ({ deps, query }) =>
     ok(await listProjects(deps, { repo: query.get('repo') ?? undefined, counts: query.get('counts') !== '0' })),
   ),

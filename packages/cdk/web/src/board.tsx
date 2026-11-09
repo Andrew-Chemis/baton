@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { api, messageOf } from './api.ts';
 import { CardTile, type TilePointerEvent } from './card-tile.tsx';
 import { Drawer } from './drawer.tsx';
+import { comparePos } from '../../service/rank.ts';
 import { positionAt, slotAt } from './dnd.ts';
 import { usePoll } from './hooks.ts';
 import { Link, navigate, type Route } from './router.tsx';
@@ -29,7 +30,6 @@ interface Pending {
 const THRESHOLD = 5;
 /** Sorts after any real position: a card whose move has no position yet waits at the end of its column. */
 const END = String.fromCharCode(0xffff);
-const byPos = (a: CardView, b: CardView) => (a.pos < b.pos ? -1 : a.pos > b.pos ? 1 : a.id < b.id ? -1 : 1);
 
 export function Board(props: { projectId: string; route: Route }) {
   const { projectId, route } = props;
@@ -72,7 +72,7 @@ export function Board(props: { projectId: string; route: Route }) {
       merged.push(p ? Object.assign({}, c, { column: p.column, pos: p.pos ?? END }) : c);
     }
     const shown = repoFilter ? merged.filter((c) => c.repo === repoFilter) : merged;
-    return COLUMNS.map((col) => [col, shown.filter((c) => c.column === col).toSorted(byPos)] as const);
+    return COLUMNS.map((col) => [col, shown.filter((c) => c.column === col).toSorted(comparePos)] as const);
   }, [cards.data, pending, repoFilter]);
 
   const showRepo = (project?.repos.length ?? 0) > 1 && !repoFilter;

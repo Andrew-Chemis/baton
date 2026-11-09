@@ -1,5 +1,5 @@
 // What is stored. The wire shapes live in api-types.ts; card-model.ts turns one into the other.
-import type { Actor, Column, EventType } from './api-types.ts';
+import type { Actor, Column, EventType, LastClaimView } from './api-types.ts';
 
 export interface ClaimItem {
   agentId: string;
@@ -14,16 +14,8 @@ export interface ClaimItem {
   leaseUntil: number;
 }
 
-export interface LastClaimItem {
-  agentId: string;
-  repo: string;
-  worktree: string;
-  branch: string;
-  session: string | null;
-  endedAt: number;
-  endedBy: 'released' | 'taken_over' | 'human_done' | 'archived';
-  reason: string | null;
-}
+/** Stored as it is sent. */
+export type LastClaimItem = LastClaimView;
 
 export interface CardItem {
   PK: string;

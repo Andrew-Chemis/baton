@@ -1,15 +1,23 @@
 // Claims, heartbeats, acknowledgements, releases and moves: every operation whose rules depend on who holds a card.
 import { GSI2 } from '../src/schema.ts';
-import { RELEASE_REASONS, type CardView, type ClaimResponse, type Column, type Warning } from './api-types.ts';
-import { appendEvents, toCardView, claimView, type CardFields } from './card-model.ts';
+import {
+  RELEASE_REASONS,
+  isBackward,
+  isForward,
+  type CardView,
+  type ClaimResponse,
+  type Column,
+  type Warning,
+} from './api-types.ts';
+import { appendEvents, claimView, endedClaim, toCardView, type CardFields } from './card-model.ts';
 import { cardOp, type CardPlan } from './card-op.ts';
-import { appendPos, columnOf, endedClaim, isBackward, pendingHumanEvents, rankOf, resolveTarget } from './cards.ts';
+import { appendPos, columnOf, pendingHumanEvents, resolveTarget } from './cards.ts';
 import type { Reply, RequestCtx } from './engine.ts';
 import { ApiError, badRequest, claimHeld, notHolder } from './errors.ts';
 import type { CardItem, ClaimItem } from './items.ts';
 import { repoPartition } from './keys.ts';
 import { queryAll, type Condition, type Deps } from './store.ts';
-import { asObject, normalizeRepo, text } from './validate.ts';
+import { asObject, normalizeRepo, requiredText, text } from './validate.ts';
 
 const holderOf = (agentId: string, worktree: string) => `${agentId}#${worktree}`;
 
@@ -52,7 +60,7 @@ export async function claimCard(deps: Deps, ctx: RequestCtx, id: string, input: 
   }
   const { agentId, worktree, me } = agentWorktree(ctx, body);
   const repo = normalizeRepo(body.repo);
-  const branch = (text(body.branch, 'branch', { max: 255 }) as string).trim();
+  const branch = requiredText(body.branch, 'branch', 255).trim();
   const session = (text(body.session, 'session', { max: 200, optional: true }) ?? null)?.trim() ?? null;
   const advanceTo = body.to === undefined ? undefined : columnOf(body.to, 'to');
   return cardOp(deps, ctx, id, (card, now) =>
@@ -139,9 +147,7 @@ async function planClaim(deps: Deps, card: CardItem, now: number, a: ClaimArgs):
   ];
   let column: Column = card.column;
   let pos = card.pos;
-  const from = rankOf(card.column);
-  const to = a.advanceTo ? rankOf(a.advanceTo) : null;
-  if (a.advanceTo && from !== null && to !== null && from < to) {
+  if (a.advanceTo && isForward(card.column, a.advanceTo)) {
     column = a.advanceTo;
     pos = await appendPos(deps, card.projectId, column);
     specs.push({ type: 'moved', payload: { from: card.column, to: column } });

@@ -1,13 +1,13 @@
 // Cards: create, read, list, edit, move, comment, archive and the event log.
 import { GSI1, GSI2, GSI3 } from '../src/schema.ts';
-import { COLUMNS, COLUMN_RANK, type Actor, type CardView, type Column, type EventView } from './api-types.ts';
-import { between, isPos } from './rank.ts';
-import { appendEvents, keyed, toCardView, toEventView, type CardFields } from './card-model.ts';
+import { COLUMNS, type Actor, type CardView, type Column, type EventView } from './api-types.ts';
+import { between, comparePos, isPos } from './rank.ts';
+import { appendEvents, endedClaim, isSteering, keyed, toCardView, toEventView, type CardFields } from './card-model.ts';
 import { cardOp, loadCard } from './card-op.ts';
 import { execute, type Reply, type RequestCtx } from './engine.ts';
 import { ApiError, badRequest, forbidden } from './errors.ts';
 import { newId } from './ids.ts';
-import type { CardItem, EventItem, ClaimItem } from './items.ts';
+import type { CardItem, EventItem } from './items.ts';
 import {
   attentionPartition,
   boardPartition,
@@ -19,7 +19,7 @@ import {
 } from './keys.ts';
 import { touchProject } from './projects.ts';
 import { getItem, putNew, queryAll, type Deps, type TransactItem } from './store.ts';
-import { asObject, normalizeRepo, stringList, text } from './validate.ts';
+import { asObject, normalizeRepo, requiredText, stringList, text } from './validate.ts';
 
 const isColumn = (value: unknown): value is Column =>
   typeof value === 'string' && (COLUMNS as readonly string[]).includes(value);
@@ -61,7 +61,7 @@ function parseSlug(raw: unknown, repo: string): string | undefined {
 export async function createCard(deps: Deps, ctx: RequestCtx, input: unknown): Promise<Reply> {
   const body = asObject(input);
   const repo = normalizeRepo(body.repo);
-  const title = (text(body.title, 'title', { max: 200 }) as string).trim();
+  const title = requiredText(body.title, 'title', 200).trim();
   const cardBody = text(body.body, 'body', { max: 20_000, optional: true, min: 0 }) ?? '';
   const column = body.column === undefined ? 'backlog' : columnOf(body.column);
   const links = parseLinks(body.links);
@@ -129,8 +129,7 @@ export async function getCard(deps: Deps, id: string): Promise<{ card: CardView 
 }
 
 const byBoardOrder = (a: CardItem, b: CardItem) =>
-  COLUMNS.indexOf(a.column) - COLUMNS.indexOf(b.column) ||
-  (a.pos < b.pos ? -1 : a.pos > b.pos ? 1 : a.id < b.id ? -1 : 1);
+  COLUMNS.indexOf(a.column) - COLUMNS.indexOf(b.column) || comparePos(a, b);
 
 interface CardQuery {
   project?: string | undefined;
@@ -187,8 +186,8 @@ export async function listCards(deps: Deps, actor: Actor, query: CardQuery): Pro
 
 export function patchCard(deps: Deps, ctx: RequestCtx, id: string, input: unknown): Promise<Reply> {
   const body = asObject(input);
-  const title = body.title === undefined ? undefined : (text(body.title, 'title', { max: 200 }) as string).trim();
-  const cardBody = body.body === undefined ? undefined : (text(body.body, 'body', { max: 20_000, min: 0 }) as string);
+  const title = body.title === undefined ? undefined : requiredText(body.title, 'title', 200).trim();
+  const cardBody = body.body === undefined ? undefined : requiredText(body.body, 'body', 20_000, 0);
   const links = body.links === undefined ? undefined : parseLinks(body.links);
   if (title === undefined && cardBody === undefined && links === undefined)
     throw badRequest('Send title, body or links.');
@@ -216,7 +215,7 @@ export function patchCard(deps: Deps, ctx: RequestCtx, id: string, input: unknow
 }
 
 export function commentCard(deps: Deps, ctx: RequestCtx, id: string, input: unknown): Promise<Reply> {
-  const textBody = (text(asObject(input).text, 'text', { max: 10_000 }) as string).trim();
+  const textBody = requiredText(asObject(input).text, 'text', 10_000).trim();
   return cardOp(deps, ctx, id, (card, now) => {
     const { events, seq, lastHumanSeq } = appendEvents(card, ctx.actor, now, [
       { type: 'commented', payload: { text: textBody } },
@@ -253,22 +252,6 @@ export function archiveCard(deps: Deps, ctx: RequestCtx, id: string): Promise<Re
   });
 }
 
-export const endedClaim = (
-  claim: ClaimItem,
-  now: number,
-  endedBy: 'released' | 'taken_over' | 'human_done' | 'archived',
-  reason: string | null,
-) => ({
-  agentId: claim.agentId,
-  repo: claim.repo,
-  worktree: claim.worktree,
-  branch: claim.branch,
-  session: claim.session,
-  endedAt: now,
-  endedBy,
-  reason,
-});
-
 export async function listEvents(
   deps: Deps,
   id: string,
@@ -288,8 +271,7 @@ export async function listEvents(
 /** Human events after `since`, for the claim response. */
 export async function pendingHumanEvents(deps: Deps, card: CardItem): Promise<EventView[]> {
   const all = await listEvents(deps, card.id, card.ackedSeq, 500);
-  // The creating event is not steering: nothing in it asks the agent to do anything.
-  return all.events.filter((e) => e.actor.kind === 'human' && e.type !== 'created');
+  return all.events.filter((e) => isSteering(e.actor, e.type));
 }
 
 type MoveTarget = { to: Column; pos: string };
@@ -299,12 +281,3 @@ export async function resolveTarget(deps: Deps, card: CardItem, to: Column, pos:
     throw badRequest('pos must be a lower-case alphanumeric position string, as the board sends it.');
   return { to, pos: pos ?? (await appendPos(deps, card.projectId, to)) };
 }
-
-export const rankOf = (column: Column): number | null => COLUMN_RANK[column];
-
-/** A human moved the card to an earlier column: the work is not done (Requirement 4.1). */
-export const isBackward = (from: Column, to: Column): boolean => {
-  const a = rankOf(from);
-  const b = rankOf(to);
-  return a !== null && b !== null && b < a;
-};

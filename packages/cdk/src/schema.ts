@@ -24,3 +24,17 @@ export const HUMAN_PREFIX = `${API_ROOT}/human`;
 
 /** Routes behind the bearer-token Lambda authorizer. */
 export const AGENT_PREFIX = `${API_ROOT}/agent`;
+
+/** How long a claim lasts without a heartbeat, in minutes, unless the construct is told otherwise. */
+export const LEASE_MINUTES_DEFAULT = 10;
+
+/** How often agents are asked to send a heartbeat, in seconds, unless the construct is told otherwise. */
+export const HEARTBEAT_SECONDS_DEFAULT = 60;
+
+/** The environment variables the construct sets on the Lambda and the service reads back. */
+export const TIMING_ENV = { leaseMinutes: 'BATON_LEASE_MINUTES', heartbeatSeconds: 'BATON_HEARTBEAT_SECONDS' } as const;
+
+/** What is wrong with a lease and heartbeat pair, if anything: a heartbeat has to arrive before the lease it renews ends. */
+export function timingProblem(leaseMinutes: number, heartbeatSeconds: number): string | undefined {
+  return heartbeatSeconds >= leaseMinutes * 60 ? 'heartbeatSeconds must be shorter than the lease' : undefined;
+}

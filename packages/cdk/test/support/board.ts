@@ -3,6 +3,7 @@
 import { randomBytes } from 'node:crypto';
 import { inject } from 'vitest';
 import { AGENT_PREFIX, HUMAN_PREFIX } from '../../src/schema.ts';
+import { configFor } from '../../service/config.ts';
 import { authorize, handleHttp, type HttpEvent } from '../../service/router.ts';
 import { createDocClient, type Deps } from '../../service/store.ts';
 import { createTable } from './table.ts';
@@ -56,7 +57,7 @@ export async function newBoard(options: { leaseMs?: number; heartbeatSeconds?: n
   const clock = makeClock();
   const deps: Deps = {
     db: createDocClient({ endpoint, region, credentials }),
-    config: { table, leaseMs: options.leaseMs ?? 10 * MINUTE, heartbeatSeconds: options.heartbeatSeconds ?? 60 },
+    config: configFor(table, options),
     now: clock.now,
   };
 

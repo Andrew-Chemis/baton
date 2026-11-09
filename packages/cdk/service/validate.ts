@@ -22,8 +22,9 @@ export function text(
   return value;
 }
 
-export function requiredText(value: unknown, field: string, max: number): string {
-  return text(value, field, { max }) as string;
+/** A string that must be there and at least `min` characters long once trimmed (default 1); returned as sent. */
+export function requiredText(value: unknown, field: string, max: number, min = 1): string {
+  return text(value, field, { max, min }) as string;
 }
 
 export function stringList(value: unknown, field: string, maxItems: number, maxLength: number): string[] {

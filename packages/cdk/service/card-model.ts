@@ -1,5 +1,5 @@
 // Pure functions over card items: derived keys, derived state, views. No I/O.
-import type { Actor, CardState, CardView, ClaimView, EventType, EventView, LastClaimView } from './api-types.ts';
+import type { Actor, CardState, CardView, ClaimEnd, ClaimView, EventType, EventView } from './api-types.ts';
 import { attentionPartition, boardPartition, boardSort, cardKey, eventKey, repoPartition } from './keys.ts';
 import type { CardItem, ClaimItem, EventItem, LastClaimItem } from './items.ts';
 
@@ -11,7 +11,7 @@ const needsAttention = (card: CardFields): boolean =>
 
 /** Attaches every key attribute, derived from the logical fields so a move or an ack can never leave an index stale. */
 export function keyed(card: CardFields): CardItem {
-  const attention = needsAttention(card) && card.lastAgentId !== undefined;
+  const agent = needsAttention(card) ? card.lastAgentId : undefined;
   return {
     ...card,
     ...cardKey(card.id),
@@ -20,8 +20,8 @@ export function keyed(card: CardFields): CardItem {
     GSI1SK: boardSort(card.column, card.pos, card.id),
     GSI2PK: repoPartition(card.repo),
     GSI2SK: `CARD#${card.id}`,
-    GSI3PK: attention ? attentionPartition(card.lastAgentId as string) : undefined,
-    GSI3SK: attention ? `${String(card.updatedAt).padStart(15, '0')}#${card.id}` : undefined,
+    GSI3PK: agent === undefined ? undefined : attentionPartition(agent),
+    GSI3SK: agent === undefined ? undefined : `${String(card.updatedAt).padStart(15, '0')}#${card.id}`,
   };
 }
 
@@ -32,6 +32,23 @@ export function stateOf(card: CardFields, now: number): CardState {
 
 export const isUnread = (card: CardFields): boolean =>
   card.lastAgentId !== undefined && card.lastHumanSeq > card.ackedSeq;
+
+/** Where a claim was left when it ended, kept on the card for the next agent. */
+export const endedClaim = (
+  claim: ClaimItem,
+  endedAt: number,
+  endedBy: ClaimEnd,
+  reason: string | null,
+): LastClaimItem => ({
+  agentId: claim.agentId,
+  repo: claim.repo,
+  worktree: claim.worktree,
+  branch: claim.branch,
+  session: claim.session,
+  endedAt,
+  endedBy,
+  reason,
+});
 
 export function claimView(claim: ClaimItem, now: number): ClaimView {
   return {
@@ -46,8 +63,6 @@ export function claimView(claim: ClaimItem, now: number): ClaimView {
     stale: claim.leaseUntil < now,
   };
 }
-
-const lastClaimView = (c: LastClaimItem): LastClaimView => ({ ...c });
 
 export function toCardView(card: CardItem, now: number, withBody: boolean): CardView {
   return {
@@ -67,7 +82,7 @@ export function toCardView(card: CardItem, now: number, withBody: boolean): Card
     archived: card.archived,
     links: card.links,
     claim: card.claim ? claimView(card.claim, now) : null,
-    lastClaim: card.lastClaim ? lastClaimView(card.lastClaim) : null,
+    lastClaim: card.lastClaim ?? null,
     state: stateOf(card, now),
     unread: isUnread(card),
     createdAt: card.createdAt,
@@ -82,6 +97,9 @@ export function toEventView(event: EventItem): EventView {
 /** Event types a human raises that the owning agent must read and acknowledge. */
 const STEERING: ReadonlySet<EventType> = new Set(['edited', 'moved', 'commented', 'released']);
 
+/** A human's event that asks something of the card's agent: the creating event, and every agent's own, do not. */
+export const isSteering = (actor: Actor, type: EventType): boolean => actor.kind === 'human' && STEERING.has(type);
+
 export interface EventSpec {
   type: EventType;
   payload: Record<string, unknown>;
@@ -93,7 +111,7 @@ export function appendEvents(card: CardFields, actor: Actor, now: number, specs:
   let lastHumanSeq = card.lastHumanSeq;
   const events: EventItem[] = specs.map((spec) => {
     seq += 1;
-    if (actor.kind === 'human' && STEERING.has(spec.type)) lastHumanSeq = seq;
+    if (isSteering(actor, spec.type)) lastHumanSeq = seq;
     return {
       ...eventKey(card.id, seq),
       type: 'event',

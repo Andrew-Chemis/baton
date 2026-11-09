@@ -3,15 +3,18 @@
 export const COLUMNS = ['backlog', 'ready', 'in_progress', 'in_review', 'done', 'blocked'] as const;
 export type Column = (typeof COLUMNS)[number];
 
-/** Board order. `blocked` sits outside it: it never counts as backward or forward. */
-export const COLUMN_RANK: Record<Column, number | null> = {
-  backlog: 0,
-  ready: 1,
-  in_progress: 2,
-  in_review: 3,
-  done: 4,
-  blocked: null,
+/** The board's flow, left to right. `blocked` sits outside it: it never counts as backward or forward. */
+const FLOW: readonly Column[] = COLUMNS.filter((column) => column !== 'blocked');
+
+/** `to` is further along the flow than `from`. */
+export const isForward = (from: Column, to: Column): boolean => {
+  const a = FLOW.indexOf(from);
+  const b = FLOW.indexOf(to);
+  return a >= 0 && b > a;
 };
+
+/** `to` is earlier in the flow than `from`: for a human move, the work is not done (Requirement 4.1). */
+export const isBackward = (from: Column, to: Column): boolean => isForward(to, from);
 
 export const RELEASE_REASONS = ['done', 'paused', 'blocked', 'session_ended'] as const;
 
@@ -66,6 +69,9 @@ export interface ClaimView {
   stale: boolean;
 }
 
+/** How a claim ended. */
+export type ClaimEnd = 'released' | 'taken_over' | 'human_done' | 'archived';
+
 /** Where the last claim was left, so a later agent resumes in the right worktree and branch. */
 export interface LastClaimView {
   agentId: string;
@@ -74,7 +80,7 @@ export interface LastClaimView {
   branch: string;
   session: string | null;
   endedAt: number;
-  endedBy: 'released' | 'taken_over' | 'human_done' | 'archived';
+  endedBy: ClaimEnd;
   reason: string | null;
 }
 

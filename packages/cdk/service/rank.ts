@@ -25,3 +25,7 @@ export const isPos = (value: unknown): value is string =>
 export function between(after: string | null, before: string | null): string {
   return midpoint(after ?? '', before);
 }
+
+/** Order within a column: by position, then by id when two cards ended up with one position. The board and the API agree on it. */
+export const comparePos = (a: { pos: string; id: string }, b: { pos: string; id: string }): number =>
+  a.pos < b.pos ? -1 : a.pos > b.pos ? 1 : a.id < b.id ? -1 : 1;
