@@ -3,23 +3,14 @@
 // same drag is also done with a real mouse in Chromium by the browser check.
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { Board } from '../../web/src/board.tsx';
-import { setApiConfig } from '../../web/src/api.ts';
-import { mount, settle, stubApi, until, view } from './support.tsx';
+import { mount, projectView, route, settle, stubApi, until, useWebEnv, view } from './support.tsx';
 
 const cards = [
   view({ id: 'a', title: 'Alpha', column: 'backlog', pos: 'a' }),
   view({ id: 'b', title: 'Bravo', column: 'ready', pos: 'b' }),
   view({ id: 'c', title: 'Charlie', column: 'ready', pos: 'd' }),
 ];
-const project = {
-  id: 'widgets',
-  name: 'Widgets',
-  repos: ['acme/widgets'],
-  archived: false,
-  lastEventAt: 1,
-  createdAt: 1,
-};
-const route = { path: '/p/widgets', query: new URLSearchParams() };
+const project = projectView('widgets', { name: 'Widgets' });
 
 function fire(target: Element, type: string, x: number, y: number) {
   const PointerCtor = (globalThis as { PointerEvent?: typeof MouseEvent }).PointerEvent ?? MouseEvent;
@@ -37,9 +28,8 @@ function fire(target: Element, type: string, x: number, y: number) {
 
 let under: Element | null = null;
 
+useWebEnv('/p/widgets');
 beforeEach(() => {
-  setApiConfig({ apiUrl: '/api' });
-  history.replaceState(null, '', '/p/widgets');
   Element.prototype.setPointerCapture = vi.fn();
   Element.prototype.releasePointerCapture = vi.fn();
   Element.prototype.scrollBy = vi.fn();
@@ -64,8 +54,6 @@ beforeEach(() => {
 });
 afterEach(() => {
   vi.restoreAllMocks();
-  vi.unstubAllGlobals();
-  document.body.replaceChildren();
   under = null;
 });
 
@@ -76,7 +64,7 @@ async function board() {
     'POST /cards/a/move': { card: cards[0] },
     'POST /cards/b/move': { card: cards[1] },
   });
-  const root = await mount(<Board projectId="widgets" route={route} />);
+  const root = await mount(<Board projectId="widgets" route={route()} />);
   await until(() => root.querySelector('.card'), 'cards');
   return { root, calls, moves: () => calls.filter((c) => c.method === 'POST') };
 }
@@ -191,7 +179,7 @@ describe('dropping a card', () => {
         { status: 409 },
       ),
     });
-    const root = await mount(<Board projectId="widgets" route={route} />);
+    const root = await mount(<Board projectId="widgets" route={route()} />);
     await until(() => root.querySelector('.card'), 'cards');
     const alpha = card(root, 'a');
     fire(alpha, 'pointerdown', 20, 20);

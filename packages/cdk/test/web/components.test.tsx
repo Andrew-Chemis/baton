@@ -1,13 +1,24 @@
 // Requirements 6 and 10 as the page shows them: states told apart by shape and wording, the dashboard putting what needs a
 // person first, the board's columns, filter, drawer and forms. Layout and dragging need a real browser and are checked there.
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { describe, expect, test } from 'vitest';
 import { Agents } from '../../web/src/agents.tsx';
 import { badgesFor, CardBadges } from '../../web/src/badges.tsx';
 import { Board } from '../../web/src/board.tsx';
 import { Dashboard, ordered } from '../../web/src/dashboard.tsx';
-import { setApiConfig } from '../../web/src/api.ts';
-import type { ProjectView } from '../../web/src/types.ts';
-import { mount, settle, stubApi, until, view } from './support.tsx';
+import {
+  button,
+  choose,
+  counts,
+  mount,
+  projectView,
+  route,
+  stubApi,
+  submit,
+  type,
+  until,
+  useWebEnv,
+  view,
+} from './support.tsx';
 
 const NOW = Date.now();
 const claim = (over: object = {}) => ({
@@ -23,15 +34,7 @@ const claim = (over: object = {}) => ({
   ...over,
 });
 
-beforeEach(() => {
-  setApiConfig({ apiUrl: '/api' });
-  history.replaceState(null, '', '/');
-  vi.stubGlobal('confirm', () => true);
-});
-afterEach(() => {
-  vi.unstubAllGlobals();
-  document.body.replaceChildren();
-});
+useWebEnv('/');
 
 describe('card badges', () => {
   const cases = [
@@ -71,25 +74,8 @@ describe('card badges', () => {
   });
 });
 
-const counts = (over: object = {}) => ({
-  total: 4,
-  claimed: 0,
-  stale: 0,
-  unowned: 0,
-  reopened: 0,
-  unread: 0,
-  inReview: 0,
-  ...over,
-});
-const project = (id: string, c: object, lastEventAt: number, repos = ['acme/' + id]): ProjectView => ({
-  id,
-  name: id.toUpperCase(),
-  repos,
-  archived: false,
-  lastEventAt,
-  createdAt: 1,
-  counts: counts(c),
-});
+const project = (id: string, c: object, lastEventAt: number) =>
+  projectView(id, { name: id.toUpperCase(), lastEventAt, counts: counts(c) });
 
 describe('dashboard', () => {
   const projects = [
@@ -133,16 +119,12 @@ describe('dashboard', () => {
     });
     const root = await mount(<Dashboard />);
     await until(() => root.querySelector('form.register'), 'the form');
-    const [name, repos] = [root.querySelector('form.register input'), root.querySelector('form.register textarea')] as [
-      HTMLInputElement,
-      HTMLTextAreaElement,
-    ];
-    name.value = 'New one';
-    name.dispatchEvent(new Event('input', { bubbles: true }));
-    repos.value = 'acme/a, https://github.com/acme/b.git';
-    repos.dispatchEvent(new Event('input', { bubbles: true }));
-    await settle();
-    root.querySelector('form.register')?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    await type(root.querySelector('form.register input') as HTMLInputElement, 'New one');
+    await type(
+      root.querySelector('form.register textarea') as HTMLTextAreaElement,
+      'acme/a, https://github.com/acme/b.git',
+    );
+    submit(root.querySelector('form.register'));
     await until(() => location.pathname === '/p/new-one', 'navigation to the new board');
     expect(calls.find((c) => c.method === 'POST')?.body).toEqual({
       name: 'New one',
@@ -163,16 +145,9 @@ describe('dashboard', () => {
     });
     const root = await mount(<Dashboard />);
     await until(() => root.querySelector('form.register'), 'the form');
-    const [name, repos] = [root.querySelector('form.register input'), root.querySelector('form.register textarea')] as [
-      HTMLInputElement,
-      HTMLTextAreaElement,
-    ];
-    name.value = 'Second';
-    name.dispatchEvent(new Event('input', { bubbles: true }));
-    repos.value = 'acme/a';
-    repos.dispatchEvent(new Event('input', { bubbles: true }));
-    await settle();
-    root.querySelector('form.register')?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    await type(root.querySelector('form.register input') as HTMLInputElement, 'Second');
+    await type(root.querySelector('form.register textarea') as HTMLTextAreaElement, 'acme/a');
+    submit(root.querySelector('form.register'));
     await until(() => root.querySelector('.register .error'), 'the refusal');
     expect(root.querySelector('.register .error')?.textContent).toMatch(/belongs to project "Payments"/);
     expect(location.pathname).toBe('/');
@@ -202,24 +177,20 @@ describe('board', () => {
     }),
     view({ id: 'e', title: 'Done card', column: 'done', pos: 'e' }),
   ];
-  const projectView = {
-    id: 'widgets',
+  const widgets = projectView('widgets', {
     name: 'Widgets',
     repos: ['acme/widgets', 'acme/web'],
-    archived: false,
     lastEventAt: NOW,
-    createdAt: 1,
     counts: counts({ claimed: 1, stale: 1 }),
-  };
+  });
   const routes = (extra: Record<string, unknown> = {}) => ({
-    'GET /projects': { projects: [projectView] },
+    'GET /projects': { projects: [widgets] },
     'GET /cards?project=widgets': { cards },
     'GET /cards?project=widgets&archived=1': {
       cards: [...cards, view({ id: 'z', title: 'Old card', archived: true })],
     },
     ...extra,
   });
-  const route = (query = '') => ({ path: '/p/widgets', query: new URLSearchParams(query) });
 
   test("groups cards by column, shows counts and the project's summary", async () => {
     stubApi(routes());
@@ -268,19 +239,14 @@ describe('board', () => {
     const calls = stubApi(routes({ 'POST /cards': { card: view(), created: true } }));
     const root = await mount(<Board projectId="widgets" route={route()} />);
     await until(() => root.querySelector('.card'), 'cards');
-    [...root.querySelectorAll('button')].find((b) => b.textContent === 'New card')?.click();
+    button(root, 'New card').click();
     await until(() => root.querySelector('form.new-card'), 'the new-card form');
     const form = root.querySelector('form.new-card') as HTMLFormElement;
-    const title = form.querySelector('input') as HTMLInputElement;
-    title.value = 'Brand new';
-    title.dispatchEvent(new Event('input', { bubbles: true }));
+    await type(form.querySelector('input') as HTMLInputElement, 'Brand new');
     const [repo, column] = form.querySelectorAll('select');
-    (repo as HTMLSelectElement).value = 'acme/web';
-    repo?.dispatchEvent(new Event('change', { bubbles: true }));
-    (column as HTMLSelectElement).value = 'ready';
-    column?.dispatchEvent(new Event('change', { bubbles: true }));
-    await settle();
-    form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    await choose(repo, 'acme/web');
+    await choose(column, 'ready');
+    submit(form);
     await until(() => calls.some((c) => c.method === 'POST'), 'the create call');
     expect(calls.find((c) => c.method === 'POST')?.body).toEqual({
       repo: 'acme/web',
@@ -327,17 +293,12 @@ describe('board', () => {
     expect(root.querySelector('.drawer [data-badge="stale"]')).toBeTruthy();
     expect(root.querySelector('.drawer .events')?.textContent).toMatch(/nova took it on feat\/x/);
 
-    const text = root.querySelector('.comment-box textarea') as HTMLTextAreaElement;
-    text.value = 'Please resume this one.';
-    text.dispatchEvent(new Event('input', { bubbles: true }));
-    await settle();
-    root.querySelector('.comment-box')?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    await type(root.querySelector('.comment-box textarea') as HTMLTextAreaElement, 'Please resume this one.');
+    submit(root.querySelector('.comment-box'));
     await until(() => calls.some((c) => c.path.endsWith('/comments')), 'the comment call');
     expect(calls.find((c) => c.path.endsWith('/comments'))?.body).toEqual({ text: 'Please resume this one.' });
 
-    const move = root.querySelector('.move-row select') as HTMLSelectElement;
-    move.value = 'ready';
-    move.dispatchEvent(new Event('change', { bubbles: true }));
+    await choose(root.querySelector('.move-row select') as HTMLSelectElement, 'ready');
     await until(() => calls.some((c) => c.path.endsWith('/move')), 'the move call');
     expect(calls.find((c) => c.path.endsWith('/move'))?.body).toEqual({ to: 'ready' });
   });
@@ -370,11 +331,11 @@ describe('agents page', () => {
     const root = await mount(<Agents />);
     await until(() => root.querySelector('.agent'), 'the agent');
     expect(root.textContent).not.toContain('baton_secret_value');
-    [...root.querySelectorAll('button')].find((b) => b.textContent === 'New token')?.click();
+    button(root, 'New token').click();
     await until(() => root.querySelector('[data-testid="token"]'), 'the token');
     expect(root.querySelector('[data-testid="token"]')?.textContent).toBe('baton_secret_value');
     expect(root.querySelector('.snippet')?.textContent).toContain('BATON_TOKEN=baton_secret_value');
-    [...root.querySelectorAll('button')].find((b) => b.textContent === 'I have stored it')?.click();
+    button(root, 'I have stored it').click();
     await until(() => !root.querySelector('[data-testid="token"]'), 'the token to be hidden');
     [...root.querySelectorAll('button')].find((b) => b.getAttribute('aria-label')?.startsWith('Revoke'))?.click();
     await until(() => calls.some((c) => c.method === 'DELETE'), 'the revoke call');

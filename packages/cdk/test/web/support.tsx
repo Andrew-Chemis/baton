@@ -1,7 +1,9 @@
 import { act } from 'preact/test-utils';
 import { render } from 'preact';
 import type { ComponentChild } from 'preact';
-import { vi } from 'vitest';
+import { afterEach, beforeEach, vi } from 'vitest';
+import { setApiConfig } from '../../web/src/api.ts';
+import type { ProjectCounts, ProjectView } from '../../web/src/types.ts';
 
 /** What a request body was: parsed when it is JSON, else the text (the token endpoint takes a form). */
 function parseBody(body: BodyInit | null | undefined): unknown {
@@ -93,3 +95,61 @@ export const view = (over: Record<string, unknown> = {}) => ({
   updatedAt: 1,
   ...over,
 });
+
+/** What every page test starts from: the api at /api, the address at `path`, window.confirm saying yes; put back afterwards. */
+export function useWebEnv(path: string): void {
+  beforeEach(() => {
+    setApiConfig({ apiUrl: '/api' });
+    history.replaceState(null, '', path);
+    vi.stubGlobal('confirm', () => true);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    document.body.replaceChildren();
+  });
+}
+
+export const counts = (over: Partial<ProjectCounts> = {}): ProjectCounts => ({
+  total: 4,
+  claimed: 0,
+  stale: 0,
+  unowned: 0,
+  reopened: 0,
+  unread: 0,
+  inReview: 0,
+  ...over,
+});
+
+export const projectView = (id: string, over: Partial<ProjectView> = {}): ProjectView => ({
+  id,
+  name: id,
+  repos: [`acme/${id}`],
+  archived: false,
+  lastEventAt: 1,
+  createdAt: 1,
+  counts: counts(),
+  ...over,
+});
+
+/** The address props a board takes: /p/widgets with the given query. */
+export const route = (query = '') => ({ path: '/p/widgets', query: new URLSearchParams(query) });
+
+/** Fill a field as a person would: set it, tell the page, and let the page redraw. */
+export async function type(input: HTMLInputElement | HTMLTextAreaElement, value: string): Promise<void> {
+  input.value = value;
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  await settle();
+}
+
+/** Choose an option in a select. */
+export async function choose(select: HTMLSelectElement | undefined, value: string): Promise<void> {
+  (select as HTMLSelectElement).value = value;
+  select?.dispatchEvent(new Event('change', { bubbles: true }));
+  await settle();
+}
+
+export const submit = (form: Element | null | undefined) =>
+  form?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+
+export const button = (root: HTMLElement, text: string) =>
+  [...root.querySelectorAll('button')].find((b) => b.textContent === text) as HTMLButtonElement;

@@ -1,21 +1,29 @@
 // Requirement 6: a person edits and archives cards, and renames, re-points and archives projects, from the page. Each action
 // calls its route once with only what changed, and a declined confirmation calls nothing.
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { setApiConfig } from '../../web/src/api.ts';
+import { describe, expect, test, vi } from 'vitest';
 import { Board } from '../../web/src/board.tsx';
 import { Toasts } from '../../web/src/toast.tsx';
-import { mount, settle, stubApi, until, view } from './support.tsx';
+import {
+  button,
+  counts,
+  mount,
+  projectView,
+  route,
+  settle,
+  stubApi,
+  submit,
+  type,
+  until,
+  useWebEnv,
+  view,
+} from './support.tsx';
 
-const NOW = Date.now();
-const project = {
-  id: 'widgets',
+const project = projectView('widgets', {
   name: 'Widgets',
   repos: ['acme/widgets', 'acme/web'],
-  archived: false,
-  lastEventAt: NOW,
-  createdAt: 1,
-  counts: { total: 1, claimed: 0, stale: 0, unowned: 0, reopened: 0, unread: 0, inReview: 0 },
-};
+  lastEventAt: Date.now(),
+  counts: counts({ total: 1 }),
+});
 const card = view({ id: 'a', title: 'Original title', body: 'Original details', column: 'ready' });
 const routes = (extra: Record<string, unknown> = {}) => ({
   'GET /projects': { projects: [project] },
@@ -24,30 +32,13 @@ const routes = (extra: Record<string, unknown> = {}) => ({
   'GET /cards/a/events': { events: [], seq: 1 },
   ...extra,
 });
-const open = (query = '') => ({ path: '/p/widgets', query: new URLSearchParams(query) });
-const type = async (input: HTMLInputElement | HTMLTextAreaElement, value: string) => {
-  input.value = value;
-  input.dispatchEvent(new Event('input', { bubbles: true }));
-  await settle();
-};
-const submit = (form: Element | null) => form?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-const button = (root: HTMLElement, text: string) =>
-  [...root.querySelectorAll('button')].find((b) => b.textContent === text) as HTMLButtonElement;
 
-beforeEach(() => {
-  setApiConfig({ apiUrl: '/api' });
-  history.replaceState(null, '', '/p/widgets');
-  vi.stubGlobal('confirm', () => true);
-});
-afterEach(() => {
-  vi.unstubAllGlobals();
-  document.body.replaceChildren();
-});
+useWebEnv('/p/widgets');
 
 describe('editing a card', () => {
   test('saves only the field that changed, and the button waits until something changed', async () => {
     const calls = stubApi(routes({ 'PATCH /cards/a': { card } }));
-    const root = await mount(<Board projectId="widgets" route={open('card=a')} />);
+    const root = await mount(<Board projectId="widgets" route={route('card=a')} />);
     await until(() => root.querySelector('form.edit'), 'the edit form');
     const save = button(root, 'Save changes');
     expect(save.disabled).toBe(true);
@@ -62,7 +53,7 @@ describe('editing a card', () => {
 
   test('the details are saved on their own', async () => {
     const calls = stubApi(routes({ 'PATCH /cards/a': { card } }));
-    const root = await mount(<Board projectId="widgets" route={open('card=a')} />);
+    const root = await mount(<Board projectId="widgets" route={route('card=a')} />);
     await until(() => root.querySelector('form.edit'), 'the edit form');
     await type(root.querySelector('form.edit textarea') as HTMLTextAreaElement, 'New details');
     submit(root.querySelector('form.edit'));
@@ -81,7 +72,7 @@ describe('editing a card', () => {
     );
     const root = await mount(
       <>
-        <Board projectId="widgets" route={open('card=a')} />
+        <Board projectId="widgets" route={route('card=a')} />
         <Toasts />
       </>,
     );
@@ -99,7 +90,7 @@ describe('archiving a card', () => {
     const calls = stubApi(routes({ 'POST /cards/a/archive': { card: { ...card, archived: true } } }));
     const confirmed = vi.fn(() => true);
     vi.stubGlobal('confirm', confirmed);
-    const root = await mount(<Board projectId="widgets" route={open('card=a')} />);
+    const root = await mount(<Board projectId="widgets" route={route('card=a')} />);
     await until(() => root.querySelector('.move-row'), 'the drawer');
     button(root, 'Archive').click();
     await until(() => calls.some((c) => c.path.endsWith('/archive')), 'the archive call');
@@ -110,7 +101,7 @@ describe('archiving a card', () => {
   test('declining the question calls nothing', async () => {
     const calls = stubApi(routes());
     vi.stubGlobal('confirm', () => false);
-    const root = await mount(<Board projectId="widgets" route={open('card=a')} />);
+    const root = await mount(<Board projectId="widgets" route={route('card=a')} />);
     await until(() => root.querySelector('.move-row'), 'the drawer');
     button(root, 'Archive').click();
     await settle(50);
@@ -123,7 +114,7 @@ describe('project settings', () => {
     const calls = stubApi(routes(extra));
     const root = await mount(
       <>
-        <Board projectId="widgets" route={open()} />
+        <Board projectId="widgets" route={route()} />
         <Toasts />
       </>,
     );
