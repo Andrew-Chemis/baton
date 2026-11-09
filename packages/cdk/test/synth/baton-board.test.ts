@@ -32,8 +32,6 @@ function synth(props: Partial<BatonBoardProps> = {}, withEdge = true) {
   return { app, assembly, stack, board, template: Template.fromStack(stack), edge: Template.fromStack(edge) };
 }
 
-const resourcesOf = (template: Template, type: string): Record<string, any> => template.findResources(type);
-
 describe('assets inside the package', () => {
   test('the Lambda bundle and the built web app exist where the construct looks', () => {
     expect(existsSync(join(API_ASSET_PATH, 'index.js'))).toBe(true);
@@ -49,21 +47,21 @@ describe('synthesis', () => {
   });
 
   test('one Lambda asset serves the API and the token authorizer', () => {
-    const ours = Object.values(resourcesOf(template, 'AWS::Lambda::Function')).filter(
+    const ours = Object.values(template.findResources('AWS::Lambda::Function')).filter(
       (r: any) => r.Properties.Handler === 'index.handler' && r.Properties.Runtime === 'nodejs22.x',
     );
     expect(ours).toHaveLength(1);
-    const authorizers = resourcesOf(template, 'AWS::ApiGatewayV2::Authorizer');
+    const authorizers = template.findResources('AWS::ApiGatewayV2::Authorizer');
     expect(Object.keys(authorizers)).toHaveLength(2);
     const fn = Object.values(authorizers).find((a) => a.Properties.AuthorizerType === 'REQUEST');
-    const functionIds = Object.keys(resourcesOf(template, 'AWS::Lambda::Function'));
-    expect(JSON.stringify(fn.Properties.AuthorizerUri)).toContain(
+    const functionIds = Object.keys(template.findResources('AWS::Lambda::Function'));
+    expect(JSON.stringify(fn?.Properties.AuthorizerUri)).toContain(
       functionIds.find((id) => id.startsWith('BoardApi')) as string,
     );
   });
 
   test('the Lambda role may use the table and its indexes with the calls the service makes, and nothing else on DynamoDB', () => {
-    const statements = Object.values(resourcesOf(template, 'AWS::IAM::Policy'))
+    const statements = Object.values(template.findResources('AWS::IAM::Policy'))
       .flatMap((p: any) => p.Properties.PolicyDocument.Statement)
       .filter((s: any) => JSON.stringify(s.Action).includes('dynamodb'));
     expect(statements).toHaveLength(1);
@@ -90,7 +88,7 @@ describe('synthesis', () => {
       AuthorizerResultTtlInSeconds: 300,
       IdentitySource: ['$request.header.Authorization'],
     });
-    const routes = Object.values(resourcesOf(template, 'AWS::ApiGatewayV2::Route'));
+    const routes = Object.values(template.findResources('AWS::ApiGatewayV2::Route'));
     expect(routes.map((r) => String(r.Properties.RouteKey)).toSorted()).toEqual([
       'ANY /api/agent/{proxy+}',
       'ANY /api/human/{proxy+}',
@@ -101,8 +99,8 @@ describe('synthesis', () => {
     }
     const human = routes.find((r) => r.Properties.RouteKey.includes('/human/'));
     const agent = routes.find((r) => r.Properties.RouteKey.includes('/agent/'));
-    expect(human.Properties.AuthorizationType).toBe('JWT');
-    expect(agent.Properties.AuthorizationType).toBe('CUSTOM');
+    expect(human?.Properties.AuthorizationType).toBe('JWT');
+    expect(agent?.Properties.AuthorizationType).toBe('CUSTOM');
   });
 
   test('the table is on-demand with the AWS-owned key, point-in-time recovery, TTL and three indexes', () => {
@@ -121,10 +119,9 @@ describe('synthesis', () => {
         Match.objectLike({ IndexName: 'GSI3' }),
       ],
     });
-    const table = Object.values(resourcesOf(template, 'AWS::DynamoDB::Table'))[0];
     // `SSEEnabled: false` is how CloudFormation spells the AWS-owned key; a managed or customer key would say KMS.
-    expect(table.Properties.SSESpecification ?? { SSEEnabled: false }).toEqual({ SSEEnabled: false });
-    expect(table.DeletionPolicy).toBe('Retain');
+    template.hasResourceProperties('AWS::DynamoDB::Table', { SSESpecification: Match.exact({ SSEEnabled: false }) });
+    template.hasResource('AWS::DynamoDB::Table', { DeletionPolicy: 'Retain' });
   });
 
   test('cost policy: nothing with a standing charge', () => {
@@ -135,7 +132,7 @@ describe('synthesis', () => {
       'AWS::KMS::Alias',
       'AWS::ApplicationAutoScaling::ScalableTarget',
     ]) {
-      expect(Object.keys(resourcesOf(template, type)), type).toEqual([]);
+      template.resourceCountIs(type, 0);
     }
     expect(json).not.toContain('ProvisionedThroughput');
     expect(json).not.toContain('ReadCapacityUnits');
@@ -149,7 +146,7 @@ describe('synthesis', () => {
       'AWS::CloudFront::ResponseHeadersPolicy',
       'AWS::WAFv2::WebACL',
     ]) {
-      expect(Object.keys(resourcesOf(template, type)), type).toEqual([]);
+      template.resourceCountIs(type, 0);
     }
     template.hasResourceProperties('AWS::S3::Bucket', {
       BucketEncryption: {
@@ -203,8 +200,8 @@ describe('synthesis', () => {
       }),
     });
     // The API origin is the host of the API's endpoint, worked out in the template, never the endpoint's full URL.
-    const [distribution] = Object.values(resourcesOf(template, 'AWS::CloudFront::Distribution'));
-    const origins = distribution.Properties.DistributionConfig.Origins as { DomainName: unknown }[];
+    const [distribution] = Object.values(template.findResources('AWS::CloudFront::Distribution'));
+    const origins = distribution?.Properties.DistributionConfig.Origins as { DomainName: unknown }[];
     const api = origins.find(
       (o) => typeof o.DomainName === 'object' && JSON.stringify(o.DomainName).includes('Fn::Split'),
     );
@@ -215,7 +212,7 @@ describe('synthesis', () => {
     template.resourceCountIs('AWS::CloudFront::OriginAccessControl', 1);
     template.resourceCountIs('AWS::CloudFront::Function', 2);
     // The headers function also marks the content-named files under /assets/ immutable, and only those, and only when served.
-    const code = Object.values(resourcesOf(template, 'AWS::CloudFront::Function'))
+    const code = Object.values(template.findResources('AWS::CloudFront::Function'))
       .map((f) => f.Properties.FunctionCode as string)
       .find((c) => c.includes('strict-transport-security'));
     expect(code, 'the security headers function').toBeDefined();
@@ -231,7 +228,7 @@ describe('synthesis', () => {
     expect(respond('/config.json', 200)['cache-control']).toEqual({ value: 'max-age=0' });
     expect(respond('/assets/missing.js', 404)['cache-control']).toEqual({ value: 'max-age=0' });
     template.resourceCountIs('AWS::Route53::RecordSet', 2);
-    expect(Object.keys(resourcesOf(template, 'AWS::PricingPlanManager::Subscription'))).toEqual([]);
+    template.resourceCountIs('AWS::PricingPlanManager::Subscription', 0);
   });
 });
 
@@ -259,8 +256,8 @@ describe('options', () => {
       PlanTier: 'FREE',
       UsageLevel: 'DEFAULT',
     });
-    const sub = Object.values(resourcesOf(template, 'AWS::PricingPlanManager::Subscription'))[0];
-    expect(sub.Properties.ResourceArns).toHaveLength(3);
+    const sub = Object.values(template.findResources('AWS::PricingPlanManager::Subscription'))[0];
+    expect(sub?.Properties.ResourceArns).toHaveLength(3);
     template.hasResourceProperties('AWS::CloudFront::Distribution', {
       DistributionConfig: Match.objectLike({ WebACLId: webAclArn }),
     });

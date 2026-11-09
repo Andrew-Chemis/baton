@@ -1,8 +1,8 @@
 // Requirement 8.4: a heartbeat hook that sends at most one heartbeat a minute, and a stop hook that releases the card with
 // reason session_ended and a comment. Hooks must never disturb the session: they exit 0 whatever happens.
-import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+import { stateFileOf } from './git.ts';
 import { REPO, startWorld, type World } from './harness.ts';
 
 let w: World;
@@ -13,11 +13,6 @@ beforeAll(async () => {
 afterAll(async () => w.close());
 
 const human = () => w.board.as({ human: 'owner@example.test' });
-const statePath = (dir: string) =>
-  execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-path', 'baton-card'], {
-    cwd: dir,
-    encoding: 'utf8',
-  }).trim();
 
 function counting(): { fetch: typeof fetch; paths: string[] } {
   const paths: string[] = [];
@@ -80,12 +75,12 @@ describe('heartbeat hook', () => {
 
   test('check and ack rewrite the state file but not the stamp, so they never hold a heartbeat back', async () => {
     const { dir, card } = await holding('hb-check');
-    const stamp = `${statePath(dir)}.beat`;
+    const stamp = `${stateFileOf(dir)}.beat`;
     const stamped = statSync(stamp).mtimeMs;
     expect((await w.baton(['check', card.id], { cwd: dir })).code).toBe(0);
     expect((await w.baton(['ack', card.id], { cwd: dir })).code).toBe(0);
     // The state file now records what check showed; the stamp is exactly where the claim left it.
-    expect(JSON.parse(readFileSync(statePath(dir), 'utf8')).checked[card.id]).toBeGreaterThan(0);
+    expect(JSON.parse(readFileSync(stateFileOf(dir), 'utf8')).checked[card.id]).toBeGreaterThan(0);
     expect(statSync(stamp).mtimeMs).toBe(stamped);
     const net = counting();
     await w.baton(['hook', 'heartbeat'], { cwd: dir, fetch: net.fetch, now: () => stamped + 61_000 });
@@ -120,7 +115,7 @@ describe('heartbeat hook', () => {
     const result = await w.baton(['hook', 'heartbeat'], { cwd: dir, now: () => Date.now() + 61_000 });
     expect(result.code).toBe(0);
     expect(result.stderr).toMatch(/not holding|holder|hold/i);
-    const state = JSON.parse(readFileSync(statePath(dir), 'utf8'));
+    const state = JSON.parse(readFileSync(stateFileOf(dir), 'utf8'));
     expect(state.held).toBeNull();
   });
 });
@@ -137,7 +132,7 @@ describe('stop hook', () => {
     expect(commented.payload.text).toMatch(/Session ended while this card was held/);
     expect(commented.payload.text).toContain('main');
     expect(events.at(-1)).toMatchObject({ type: 'released', payload: { reason: 'session_ended' } });
-    expect(existsSync(statePath(dir))).toBe(false);
+    expect(existsSync(stateFileOf(dir))).toBe(false);
     const again = await w.baton(['hook', 'stop'], { cwd: dir });
     expect(again.code).toBe(0);
     expect(again.stdout).toBe('');
@@ -151,7 +146,7 @@ describe('stop hook', () => {
       .post(`/cards/${card.id}/claim`, { repo: REPO, worktree: '/rival', branch: 'r' });
     const result = await w.baton(['hook', 'stop'], { cwd: dir });
     expect(result.code).toBe(0);
-    expect(existsSync(statePath(dir))).toBe(false);
+    expect(existsSync(stateFileOf(dir))).toBe(false);
     // The rival's claim is untouched.
     expect((await human().get(`/cards/${card.id}`)).body.card.claim.agentId).toBe('rival-2');
   });
@@ -162,7 +157,7 @@ describe('stop hook', () => {
     const result = await w.baton(['hook', 'stop'], { cwd: dir, fetch: down });
     expect(result.code).toBe(0);
     expect(result.stderr).toMatch(/baton hook stop/);
-    expect(existsSync(statePath(dir))).toBe(true);
+    expect(existsSync(stateFileOf(dir))).toBe(true);
   });
 
   test('an unknown hook name is a usage error', async () => {

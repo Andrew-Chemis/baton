@@ -1,6 +1,5 @@
 // A real board for CLI tests: the Lambda's router over a real table in DynamoDB Local, behind a local HTTP server, with a
 // git checkout the CLI can detect. The CLI runs in-process through run(), with the real fetch, against that server.
-import { execFileSync } from 'node:child_process';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,6 +7,7 @@ import { newAgent } from '../../cdk/test/support/agents.ts';
 import { REPO, newBoard, type Board } from '../../cdk/test/support/board.ts';
 import { startLocalServer, type LocalServer } from '../../cdk/test/support/local-server.ts';
 import { run } from '../src/run.ts';
+import { git } from './git.ts';
 
 export { REPO };
 export const REMOTE = `https://github.com/${REPO}.git`;
@@ -39,13 +39,6 @@ export interface World {
   ) => Promise<Cli>;
   close: () => Promise<void>;
 }
-
-const git = (cwd: string, ...args: string[]) =>
-  execFileSync('git', ['-c', 'user.email=t@example.test', '-c', 'user.name=t', ...args], {
-    cwd,
-    encoding: 'utf8',
-    stdio: 'pipe',
-  });
 
 export async function startWorld(): Promise<World> {
   const board = await newBoard();

@@ -17,6 +17,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
 import { HELP } from '../packages/cli/src/run.ts';
+import { git } from '../packages/cli/test/git.ts';
 
 const root = join(import.meta.dirname, '..');
 const skillDir = join(root, 'packages/cli/skill/baton');
@@ -98,9 +99,7 @@ describe('hook scripts', () => {
     const dir = mkdtempSync(join(tmpdir(), 'baton-hook-'));
     const repo = join(dir, 'repo');
     mkdirSync(repo);
-    const git = (...a: string[]) =>
-      execFileSync('git', ['-c', 'user.email=t@example.test', '-c', 'user.name=t', ...a], { cwd: repo, stdio: 'pipe' });
-    git('init', '-q', '-b', 'main');
+    git(repo, 'init', '-q', '-b', 'main');
     const bin = join(dir, 'bin');
     mkdirSync(bin);
     const log = join(dir, 'npx.log');

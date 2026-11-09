@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { normalizeRepo } from '../src/git.ts';
+import { git, stateFileOf } from './git.ts';
 import { REPO, startWorld, type World } from './harness.ts';
 import { REPO_URLS } from './repo-urls.ts';
 
@@ -15,8 +16,6 @@ beforeAll(async () => {
   await w.board.as({ human: 'owner@example.test' }).post('/projects', { name: 'Widgets', repos: [REPO] });
 });
 afterAll(async () => w.close());
-
-const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
 
 describe('normalizeRepo', () => {
   test.each(REPO_URLS)('%s', (input, expected) => {
@@ -93,8 +92,8 @@ describe('linked worktrees', () => {
 
     const first = await w.baton(['take', 'alpha'], { cwd: main });
     expect(first.code).toBe(0);
-    const stateMain = git(main, 'rev-parse', '--path-format=absolute', '--git-path', 'baton-card');
-    const stateOther = git(other, 'rev-parse', '--path-format=absolute', '--git-path', 'baton-card');
+    const stateMain = stateFileOf(main);
+    const stateOther = stateFileOf(other);
     expect(stateMain).not.toBe(stateOther);
     expect(existsSync(stateMain)).toBe(true);
     expect(existsSync(stateOther)).toBe(false);
@@ -137,10 +136,7 @@ describe('linked worktrees', () => {
     const label = b.json.card.claim.session;
     expect(label).toMatch(/^local-[0-9a-f]{12}$/);
     const c = await w.baton(['check', 'made'], { cwd: without });
-    expect(
-      JSON.parse(readFileSync(git(without, 'rev-parse', '--path-format=absolute', '--git-path', 'baton-card'), 'utf8'))
-        .session,
-    ).toBe(label);
+    expect(JSON.parse(readFileSync(stateFileOf(without), 'utf8')).session).toBe(label);
     expect(c.code).toBe(0);
   });
 });
