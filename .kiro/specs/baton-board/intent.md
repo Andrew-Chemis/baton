@@ -36,8 +36,11 @@ work is a baton that passes from session to session, and a dropped one shows.
 - Two agents in two worktrees of the same repo cannot both hold an active
   claim on the same card, and a claim records the worktree and branch so a
   later agent can resume from the right place rather than start over.
-- A human looking at the board sees where every in-flight piece of work is,
-  across every repo, on one page, with no agent asked.
+- A human looking at the dashboard sees every project being worked on and,
+  per project, how much is claimed, stale, unowned or waiting on them, and
+  one click opens that project's board. No agent is asked.
+- Registering a new project is one action from the dashboard or one command
+  from a checkout, and cards from that repo land on its board from then on.
 
 ## Non-goals
 

@@ -34,14 +34,26 @@ on. Two GSIs.
 
 | Item        | PK              | SK                  | GSI1 (board view)              | GSI2 (repo view)        |
 | ----------- | --------------- | ------------------- | ------------------------------ | ----------------------- |
-| Card        | `CARD#<id>`     | `META`              | `BOARD#main` / `COL#<col>#<pos>` | `REPO#<repo>` / `CARD#<id>` |
+| Project     | `PROJECT#<id>`  | `META`              | `PROJECTS` / `<name>`          |                         |
+| Repo map    | `REPO#<repo>`   | `META`              |                                |                         |
+| Card        | `CARD#<id>`     | `META`              | `BOARD#<project>` / `COL#<col>#<pos>` | `REPO#<repo>` / `CARD#<id>` |
 | Event       | `CARD#<id>`     | `EVT#<seq, 8 digits>` |                              |                         |
 | Key         | `KEY#<repo>/<slug>` | `META`          |                                |                         |
 | Agent       | `AGENT#<id>`    | `META`              |                                |                         |
 | Token       | `TOKEN#<sha256>`| `META`              |                                |                         |
 | Idempotency | `IDEM#<actor>#<key>` | `META`         |                                |                         |
 
-Card attributes: `id`, `key?`, `title`, `body`, `repo`, `column`, `pos`
+Project attributes: `id`, `name`, `repos[]`, `archived`, `lastEventAt`,
+`createdAt`. The Repo map item holds `projectId`, so the CLI resolves a
+project from the origin URL in one read and a repo cannot sit in two
+projects (Req 10.2): registering a repo is a conditional put on that item in
+the same transaction as the project update. Per-project counts for the
+dashboard (Req 10.4) come from a query of `GSI1` for `BOARD#<project>` and a
+fold over `state`; at this scale that is cheaper than maintained counters
+and never drifts. `lastEventAt` is written on the project by every card
+transaction.
+
+Card attributes: `id`, `projectId`, `key?`, `title`, `body`, `repo`, `column`, `pos`
 (LexoRank-style string that sorts lexicographically, for drag ordering),
 `seq` (last event number), `lastHumanSeq` (last event by a human),
 `lastAgentId`, `ackedSeq`, `reopened`, `archived`, `links[]`, `claim?`,
@@ -69,6 +81,8 @@ response body (Req 7.2). Nothing else expires.
 | ack | `lastAgentId = :me AND seq >= :n` |
 | agent move to in_review or done | `claim.agentId = :me AND ackedSeq >= lastHumanSeq` |
 | create with key | `attribute_not_exists(PK)` on the Key item, in the same transaction as the Card |
+| register repo | `attribute_not_exists(PK)` on the Repo map item, in the same transaction as the Project |
+| archive project | no card in the project with `attribute_exists(claim)`, checked by query before a conditional update on `lastEventAt` |
 
 A failed condition returns the current card, so the caller gets the
 conflicting claim or sequence in one round trip (Req 7.4). An expired-lease
@@ -107,9 +121,11 @@ All routes under `/api`. Agent routes take `Authorization: Bearer <token>` and
 
 | Method, path | Who | Does |
 | --- | --- | --- |
-| `GET /cards?repo=&column=&archived=` | both | board or repo listing, staleness computed |
+| `GET /projects` | both | dashboard: every project with counts by state, `lastEventAt` (Req 10.4) |
+| `POST /projects`, `PATCH /projects/{id}`, `POST /projects/{id}/archive` | both | register (name, repos), rename, add or remove repos, archive (Req 10.1, 10.5) |
+| `GET /cards?project=&repo=&column=&archived=` | both | board or repo listing, staleness computed |
 | `GET /cards?attention=me` | agent | cards whose `lastAgentId` is the caller and that are `reopened` or have `lastHumanSeq > ackedSeq` (Req 3.5) |
-| `POST /cards` | both | create; `key` dedupes (Req 5.4) |
+| `POST /cards` | both | create; project resolved from `repo` (Req 10.3); `key` dedupes (Req 5.4) |
 | `GET /cards/{id}` | both | card with claim and staleness |
 | `PATCH /cards/{id}` | both | title, body, links; `edited` event |
 | `POST /cards/{id}/move` | both | `{ to, pos }`; reopen and done rules |
@@ -124,7 +140,8 @@ All routes under `/api`. Agent routes take `Authorization: Bearer <token>` and
 
 Errors: `{ code, message, card? }` with codes `claim_held`, `not_holder`,
 `seq_ahead`, `unacked_comments`, `missing_worktree`, `token_revoked`,
-`idempotent_replay`. A listing marks each card `state: claimed | stale |
+`idempotent_replay`, `repo_unregistered`, `repo_taken`, `project_has_claims`.
+A listing marks each card `state: claimed | stale |
 unowned | unclaimed` from `claim`, `leaseUntil` and `column`, and `unread:
 true` when `lastHumanSeq > ackedSeq`.
 
@@ -146,10 +163,14 @@ The CLI reads `BATON_URL` and `BATON_TOKEN`, then falls back to
 ## Web app
 
 Vite SPA on S3 behind CloudFront with OAC, flat-rate plan as the other apps,
-SPA rewrite by CloudFront Function, `/api/*` to the HTTP API. One board page:
-columns, drag with pointer events, a card drawer for body, events and a
-comment box, a repo filter, an agents page for tokens. It polls `GET /cards`
-every 15 seconds; no WebSocket. Card badges: owner and branch, stale (lease
+SPA rewrite by CloudFront Function, `/api/*` to the HTTP API. Three pages.
+The dashboard (`/`) lists every project as a row: name, repos, the five
+counts, last activity, and a link to its board; a register form takes a name
+and repos. The board (`/p/<project>`) has columns, drag with pointer events,
+a card drawer for body, events and a comment box, a repo filter and project
+settings (rename, repos, archive). The agents page holds tokens. The
+dashboard polls `GET /projects` and the board `GET /cards?project=` every 15
+seconds; no WebSocket. Card badges: owner and branch, stale (lease
 expired), unowned (in-progress column, no claim), reopened, unread (owner's
 `ackedSeq < seq` of the latest human event).
 
@@ -162,7 +183,10 @@ pinned version, so the plugin ships no copy of it. The CLI resolves repo from
 the origin
 URL, worktree from `git rev-parse --show-toplevel`, branch from `git
 rev-parse --abbrev-ref HEAD`, and session from `CLAUDE_SESSION_ID` when set.
-`take` writes `.git/baton-card` (worktree-local) so the hooks know which
+Every command resolves the project through the Repo map and fails with
+`repo_unregistered` when the repo belongs to none; `baton project register
+--name <name>` creates the project or adds the repo to an existing one of
+that name (Req 10.1). `take` writes `.git/baton-card` (worktree-local) so the hooks know which
 card to heartbeat and drop without arguments. The verbs follow the metaphor:
 `take` is the claim route, `pass` is release plus move (reason `done`, `--to`
 defaults to `in_review`), `drop` is release in place (`--reason paused` or
@@ -258,6 +282,9 @@ Residue requirements and what the reviewer judges them against:
 - Req 6.1, board legibility: the four card states plus `reopened` and `unread`
   are distinguishable at a glance in light and dark; stale and unowned are
   not mistaken for claimed.
+- Req 10.4, dashboard legibility: a project needing a human (stale, unowned,
+  reopened) stands out from one that is simply busy, on one screen at twenty
+  projects.
 - Req 7.4, error payloads: each refusal tells the agent what to do next
   without reading the API doc.
 

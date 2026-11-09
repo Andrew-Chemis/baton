@@ -24,6 +24,13 @@ Status: active
   - R8.1-8.4 → CLI subcommands print JSON; outside a git tree fails named;
     env then SSM token resolution; heartbeat hook throttles to one a minute;
     stop hook drops with `session_ended`; `pass` defaults to `in_review`
+  - R10.1-10.3, 10.5 → register creates project and repo map in one
+    transaction; second registration of a repo refused with `repo_taken`;
+    card for an unmapped repo refused with `repo_unregistered`; card takes
+    its repo's project; archive refused with `project_has_claims` while a
+    claim exists; CLI `project register` adds the current repo
+  - R10.4 → dashboard listing returns per-project counts that match a seeded
+    board and the latest `lastEventAt`; archived projects absent
   - R9.1-9.3, 9.6 → pack test: tarball holds `lib/`, `assets/api/index.js`,
     `assets/web/index.html`; bin runs from the installed package; versions
     equal; string check fails on a planted account id in a fixture
@@ -34,10 +41,10 @@ Status: active
 - [ ] 2. Research the unverified facts in `design.md` and amend it <!-- pattern: solo -->
 - [ ] 3. Repo scaffold: pnpm workspace, `packages/cdk` and `packages/cli`, oxlint, oxfmt, vitest, `ci.yml`, account-string check <!-- pattern: advisor -->
 - [ ] 4. `BatonBoard` and `BatonDistribution` constructs: table, GSIs, TTL, user pool, HTTP API with both authorizers, Lambda from `assets/api`, SPA from `assets/web` <!-- pattern: advisor -->
-- [ ] 5. Service: card, event and claim modules with the conditional writes and transactions <!-- pattern: advisor -->
-- [ ] 6. Service: auth, idempotency, error codes, listing states <!-- pattern: advisor -->
-- [ ] 7. Web app: board, drag, drawer, comments, repo filter, agents and tokens page <!-- pattern: advisor -->
-- [ ] 8. CLI package: `bin`, git detection, token resolution, JSON output <!-- pattern: advisor -->
+- [ ] 5. Service: project, repo map, card, event and claim modules with the conditional writes and transactions <!-- pattern: advisor -->
+- [ ] 6. Service: auth, idempotency, error codes, listing states, dashboard counts <!-- pattern: advisor -->
+- [ ] 7. Web app: dashboard with register form, per-project board with drag, drawer, comments, repo filter and project settings, agents and tokens page <!-- pattern: advisor -->
+- [ ] 8. CLI package: `bin`, git detection, project resolution, `project register`, token resolution, JSON output <!-- pattern: advisor -->
 - [ ] 9. Build and pack: esbuild the Lambda and Vite the web app into `assets/`, `files` allowlists, pack test <!-- pattern: advisor -->
 - [ ] 10. `changelog.yml` and `release.yml` with staged npm publishing; owner sets up the `npm` environment and trusted publishing <!-- pattern: solo -->
 - [ ] 11. Skill in `claude-plugins`: `SKILL.md`, heartbeat and stop hooks calling the published CLI through `npx` at a pinned version <!-- pattern: advisor -->

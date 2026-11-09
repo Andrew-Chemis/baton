@@ -5,7 +5,9 @@ published as npm packages from a public repo, one agent-side skill that calls
 it, and the release pipeline that lets the `andrewchemis.dev` pipeline consume
 it. Goals and boundaries: `intent.md`.
 
-Vocabulary: a **card** is one unit of work. A **claim** is an agent's lease on
+Vocabulary: a **project** is a registered unit of work with a name and one or
+more repos; every card belongs to exactly one project, and a repo maps to
+exactly one project. A **card** is one unit of work. A **claim** is an agent's lease on
 a card, carrying the agent id, repo, worktree and branch, and expiring at
 `leaseUntil` unless renewed by a **heartbeat**. An **event** is one append-only
 change to a card (move, comment, claim, release, edit) with a per-card
@@ -115,21 +117,23 @@ Acceptance criteria:
   WHEN a card is created with a key that exists THE SYSTEM SHALL return the
   existing card instead of creating one.
 
-## Requirement 6: the board is one page for every repo
+## Requirement 6: a project's board is one page
 
-**User story:** As the human, I want to see all in-flight work on one page and
-move cards by dragging, so I know where everything is without asking an agent.
+**User story:** As the human, I want to see a project's in-flight work on one
+page and move cards by dragging, so I know where everything is without asking
+an agent.
 
 Acceptance criteria:
 
-- THE SYSTEM SHALL render every card on one page grouped by column, with the
-  repo, claim owner, staleness, `reopened` and unacknowledged-comment states
-  visible on the card.
+- THE SYSTEM SHALL render every card of one project on one page grouped by
+  column, with the repo, claim owner, staleness, `reopened` and
+  unacknowledged-comment states visible on the card.
 - WHEN the human drags a card to another column or position THE SYSTEM SHALL
   persist the move within one request and show it on the next poll.
 - THE SYSTEM SHALL let the human add a comment, edit title and body, create a
   card and archive a card from the page.
-- THE SYSTEM SHALL filter by repo and hide archived cards by default.
+- THE SYSTEM SHALL filter a project's board by repo and hide archived cards
+  by default.
 - THE SYSTEM SHALL require a Cognito sign-in for the page and every human API
   call, and SHALL use one user pool.
 
@@ -158,13 +162,15 @@ few lines.
 
 Acceptance criteria:
 
-- THE SYSTEM SHALL ship a CLI with `list`, `create`, `take`, `heartbeat`,
-  `check`, `ack`, `comment`, `move`, `pass` and `drop`, each printing JSON.
+- THE SYSTEM SHALL ship a CLI with `project register`, `list`, `create`,
+  `take`, `heartbeat`, `check`, `ack`, `comment`, `move`, `pass` and `drop`,
+  each printing JSON.
   `take` claims a card, including one whose lease has expired; `pass` releases
   it and moves it on (to `in_review` unless `--to` names a column); `drop`
   releases it in place with a reason (`paused`, `blocked`).
 - THE SYSTEM SHALL detect repo, worktree and branch from the current git
-  checkout and SHALL fail with a named cause when outside one.
+  checkout, resolve the project from the repo, and SHALL fail with a named
+  cause when outside a checkout or when the repo belongs to no project.
 - THE SYSTEM SHALL read its token and endpoint from the environment, and
   SHALL fall back to an SSM SecureString parameter when AWS credentials exist.
 - THE SYSTEM SHALL provide a heartbeat hook that runs on tool use at most once
@@ -202,3 +208,24 @@ Acceptance criteria:
 - WHEN the consuming app bumps the package version THE SYSTEM SHALL require
   no change beyond the version and `pnpm install`; a synth test in the consumer
   SHALL fail if the construct's assets are missing from the tarball.
+
+## Requirement 10: many projects, one dashboard
+
+**User story:** As the human, I want to register each project once and see all
+of them on one dashboard, so I know what is being worked on across everything
+without opening each board.
+
+Acceptance criteria:
+
+- THE SYSTEM SHALL let a human register a project from the dashboard with a
+  name and one or more repos, and let an agent register one from a checkout
+  with `baton project register --name <name>`, which adds the current repo.
+- WHEN a repo is registered to a project that already has it, or to a second
+  project, THE SYSTEM SHALL refuse and name the project that holds it.
+- WHEN a card is created THE SYSTEM SHALL assign it the project its repo maps
+  to, and SHALL refuse a card for a repo in no project.
+- THE SYSTEM SHALL render a dashboard of every project with, per project,
+  counts of cards claimed, stale, unowned, reopened and unread, the time of
+  the last event, and a link to its board, and SHALL hide archived projects.
+- THE SYSTEM SHALL let a human add or remove a repo, rename a project and
+  archive it, and SHALL refuse to archive a project with a claimed card.
