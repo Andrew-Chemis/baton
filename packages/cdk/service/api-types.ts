@@ -114,15 +114,31 @@ export interface CardView {
   updatedAt: number;
 }
 
-export type EventType = 'created' | 'edited' | 'moved' | 'commented' | 'claimed' | 'taken_over' | 'released';
+/** The card fields an edit event records, only those that changed. */
+export type CardEdit = { title?: string; body?: string; links?: string[] };
 
-export interface EventView {
-  seq: number;
-  at: number;
-  actor: Actor;
-  type: EventType;
-  payload: Record<string, unknown>;
-}
+/** What each kind of event carries, as the board writes it. */
+export type EventPayloads = {
+  created: { title: string; column: Column; key?: string };
+  edited: { archived: true } | CardEdit;
+  moved: { from: Column; to: Column };
+  commented: { text: string };
+  claimed: { worktree: string; branch: string; session: string | null };
+  taken_over: {
+    previous: { agentId: string; worktree: string; branch: string; heartbeatAt: number };
+    worktree: string;
+    branch: string;
+    session: string | null;
+  };
+  released: { reason: string; to?: Column };
+};
+
+export type EventType = keyof EventPayloads;
+
+/** An event's type with the payload that type carries. */
+export type EventBody = { [T in EventType]: { type: T; payload: EventPayloads[T] } }[EventType];
+
+export type EventView = { seq: number; at: number; actor: Actor } & EventBody;
 
 export interface ProjectCounts {
   total: number;

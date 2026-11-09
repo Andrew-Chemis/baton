@@ -2,6 +2,7 @@
 export type {
   AgentView,
   ApiErrorBody,
+  CardEdit,
   CardView,
   Column,
   EventView,

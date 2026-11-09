@@ -1,6 +1,6 @@
 // Cards: create, read, list, edit, move, comment, archive and the event log.
 import { GSI1, GSI2, GSI3 } from '../src/schema.ts';
-import { COLUMNS, type Actor, type CardView, type Column, type EventView } from './api-types.ts';
+import { COLUMNS, type Actor, type CardEdit, type CardView, type Column, type EventView } from './api-types.ts';
 import { between, comparePos, isPos } from './rank.ts';
 import {
   endedClaim,
@@ -200,7 +200,7 @@ export function patchCard(deps: Deps, ctx: RequestCtx, id: string, input: unknow
   if (title === undefined && cardBody === undefined && links === undefined)
     throw badRequest('Send title, body or links.');
   return cardOp(deps, ctx, id, (card, now) => {
-    const changed: Record<string, unknown> = {};
+    const changed: CardEdit = {};
     if (title !== undefined && title !== card.title) changed.title = title;
     if (cardBody !== undefined && cardBody !== card.body) changed.body = cardBody;
     if (links !== undefined && JSON.stringify(links) !== JSON.stringify(card.links)) changed.links = links;

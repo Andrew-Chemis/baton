@@ -4,7 +4,7 @@ import { api } from './api.ts';
 import { CardBadges } from './badges.tsx';
 import { ErrorNote } from './error-note.tsx';
 import { useAction, usePoll } from './hooks.ts';
-import { COLUMNS, type CardView, type Column, type EventView } from './types.ts';
+import { COLUMNS, type CardEdit, type CardView, type EventView } from './types.ts';
 import { ago, COLUMN_LABEL, span, when } from './util.ts';
 
 interface Detail {
@@ -13,11 +13,11 @@ interface Detail {
 }
 
 function describeEvent(e: EventView): string {
-  const p = e.payload as Record<string, any>;
   switch (e.type) {
     case 'created':
       return 'created the card';
-    case 'edited':
+    case 'edited': {
+      const p: CardEdit & { archived?: true } = e.payload;
       return p.archived
         ? 'archived the card'
         : `edited ${
@@ -25,18 +25,22 @@ function describeEvent(e: EventView): string {
               .filter((k) => k !== 'archived')
               .join(', ') || 'the card'
           }`;
+    }
     case 'moved':
-      return `moved it from ${COLUMN_LABEL[p.from as Column] ?? p.from} to ${COLUMN_LABEL[p.to as Column] ?? p.to}`;
+      return `moved it from ${COLUMN_LABEL[e.payload.from] ?? e.payload.from} to ${COLUMN_LABEL[e.payload.to] ?? e.payload.to}`;
     case 'commented':
       return 'commented';
     case 'claimed':
-      return `took it on ${p.branch ?? 'a branch'} in ${p.worktree ?? 'a worktree'}`;
+      return `took it on ${e.payload.branch ?? 'a branch'} in ${e.payload.worktree ?? 'a worktree'}`;
     case 'taken_over':
-      return `took it over from ${p.previous?.agentId ?? 'another agent'} (${p.previous?.branch ?? '?'})`;
-    case 'released':
-      return `released it: ${String(p.reason ?? '').replace(/_/g, ' ')}${p.to ? `, moved to ${COLUMN_LABEL[p.to as Column] ?? p.to}` : ''}`;
+      return `took it over from ${e.payload.previous?.agentId ?? 'another agent'} (${e.payload.previous?.branch ?? '?'})`;
+    case 'released': {
+      const { reason, to } = e.payload;
+      return `released it: ${(reason ?? '').replace(/_/g, ' ')}${to ? `, moved to ${COLUMN_LABEL[to] ?? to}` : ''}`;
+    }
     default:
-      return String(e.type);
+      // A kind a newer board adds still gets a line.
+      return (e as EventView).type;
   }
 }
 

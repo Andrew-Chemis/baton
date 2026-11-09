@@ -1,5 +1,5 @@
 // Pure functions over card items: derived keys, derived state, views. No I/O.
-import type { Actor, CardState, CardView, ClaimEnd, ClaimView, EventType, EventView } from './api-types.ts';
+import type { Actor, CardState, CardView, ClaimEnd, ClaimView, EventBody, EventType, EventView } from './api-types.ts';
 import { attentionPartition, boardPartition, boardSort, cardKey, eventKey, repoPartition } from './keys.ts';
 import type { CardItem, ClaimItem, EventItem, LastClaimItem } from './items.ts';
 
@@ -109,7 +109,14 @@ export function toCardView(card: CardItem, now: number, withBody: boolean): Card
 }
 
 export function toEventView(event: EventItem): EventView {
-  return { seq: event.seq, at: event.at, actor: event.actor, type: event.eventType, payload: event.payload };
+  // The item stores the pair loosely; the board only ever writes the pairs EventBody names.
+  return {
+    seq: event.seq,
+    at: event.at,
+    actor: event.actor,
+    type: event.eventType,
+    payload: event.payload,
+  } as EventView;
 }
 
 /** Event types a human raises that the owning agent must read and acknowledge. */
@@ -118,10 +125,7 @@ const STEERING: ReadonlySet<EventType> = new Set(['edited', 'moved', 'commented'
 /** A human's event that asks something of the card's agent: the creating event, and every agent's own, do not. */
 export const isSteering = (actor: Actor, type: EventType): boolean => actor.kind === 'human' && STEERING.has(type);
 
-export interface EventSpec {
-  type: EventType;
-  payload: Record<string, unknown>;
-}
+export type EventSpec = EventBody;
 
 /** The events to append to `card` and the counters they move. Heartbeats never come through here. */
 function appendEvents(card: CardFields, actor: Actor, now: number, specs: EventSpec[]) {
