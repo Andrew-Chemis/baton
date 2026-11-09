@@ -85,6 +85,15 @@ describe('every workflow', () => {
     }
   });
 
+  test('release: the tag-on-main guard has no condition, so a run from a branch fails it instead of skipping it', () => {
+    const guard = workflow('release.yml').jobs.build?.steps.find((s) => s.name === 'Require a release tag on main');
+    expect(guard).toBeDefined();
+    expect(guard?.if).toBeUndefined();
+    expect(guard?.run).toContain('GITHUB_REF_TYPE" = tag');
+    expect(guard?.run).toContain('merge-base --is-ancestor');
+    expect(guard?.run).toContain('"v$version" = "$GITHUB_REF_NAME"');
+  });
+
   test.each(files)('%s: a checkout keeps no credentials in the work tree', (name) => {
     for (const job of Object.values(workflow(name).jobs)) {
       for (const step of job.steps.filter((s) => s.uses?.startsWith('actions/checkout@'))) {

@@ -54,8 +54,10 @@ Settings, Environments, New environment, named `npm` exactly (`release.yml` name
 publisher).
 
 - Required reviewers: you. This is the approval step between a build and the registry.
-- Deployment branches and tags: a release event runs on the release's tag, so allow tags matching `v*`, or leave
-  the environment open to all refs and rely on the reviewer.
+- Deployment branches and tags: choose "Selected branches and tags" and add one rule, a tag rule matching `v*`, and no
+  branch rule. This is required: a release event runs on the release's tag, and a manual run from a branch is then
+  refused before the publish job can start. Leaving the environment open to all refs would let any branch be staged
+  once the reviewer approves it.
 - Environment secrets: none, except for the first publish (next section).
 
 ## 5. The first publish

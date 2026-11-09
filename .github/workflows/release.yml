@@ -7,8 +7,7 @@ name: release
 # the build job tests and packs on its own and writes what it packed to the run summary; the publish job waits for a reviewer to
 # approve the `npm` environment and then runs `npm stage publish`, which uploads the tarballs without making them public. A
 # maintainer then approves each staged version on npmjs.com (Staged Packages tab) or with `npm stage approve <stage-id>`, with
-# 2FA. A tag push does not start it: the release commit carries the skip-CI marker, and GitHub applies that to the push of a tag
-# on that commit too.
+# 2FA.
 #
 # Authentication is npm trusted publishing (OIDC): each package on npmjs.com names this repository, this file (release.yml) and
 # the `npm` environment. npm configures a trusted publisher on a package that already exists, so the very first stage uses an
@@ -43,11 +42,12 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      # Anyone with write access can publish a release for any tag, and tags have no ruleset: only a tag that is on main and names
-      # the version in the packages is staged.
+      # Anyone with write access can publish a release for any tag, and can start a manual run from any branch, and tags have no
+      # ruleset: only a run on a tag that is on main and names the version in the packages is built. There is no `if` here, so a
+      # branch run fails this step instead of skipping it.
       - name: Require a release tag on main
-        if: ${{ github.ref_type == 'tag' }}
         run: |
+          [ "$GITHUB_REF_TYPE" = tag ] || { echo "::error::$GITHUB_REF_NAME is a $GITHUB_REF_TYPE; only a release tag is staged"; exit 1; }
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "::error::$GITHUB_REF_NAME is not on main"; exit 1; }
           version="$(node -p "require('./packages/cli/package.json').version")"
           [ "v$version" = "$GITHUB_REF_NAME" ] || { echo "::error::tag $GITHUB_REF_NAME, but the packages are at $version"; exit 1; }
