@@ -60,7 +60,7 @@ export interface BatonBoardProps {
  * key, no secret in Secrets Manager.
  */
 export class BatonBoard extends Construct {
-  public readonly table: dynamodb.Table;
+  public readonly table: dynamodb.TableV2;
   public readonly userPool: cognito.UserPool;
   public readonly userPoolClient: cognito.UserPoolClient;
   public readonly api: HttpApi;
@@ -86,25 +86,23 @@ export class BatonBoard extends Construct {
     }
     const removal = protect ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY;
 
-    this.table = new dynamodb.Table(this, 'Table', {
+    this.table = new dynamodb.TableV2(this, 'Table', {
       partitionKey: { name: TABLE_KEYS.pk, type: dynamodb.AttributeType.STRING },
       sortKey: { name: TABLE_KEYS.sk, type: dynamodb.AttributeType.STRING },
-      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-      // The AWS-owned key: no SSESpecification, so no key to pay for.
-      encryption: dynamodb.TableEncryption.DEFAULT,
+      billing: dynamodb.Billing.onDemand(),
+      // The AWS-owned key: no customer-managed key to pay for.
+      encryption: dynamodb.TableEncryptionV2.dynamoOwnedKey(),
       pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
       timeToLiveAttribute: TTL_ATTRIBUTE,
       deletionProtection: protect,
       removalPolicy: removal,
-    });
-    for (const gsi of [GSI1, GSI2, GSI3]) {
-      this.table.addGlobalSecondaryIndex({
+      globalSecondaryIndexes: [GSI1, GSI2, GSI3].map((gsi) => ({
         indexName: gsi.name,
         partitionKey: { name: gsi.pk, type: dynamodb.AttributeType.STRING },
         sortKey: { name: gsi.sk, type: dynamodb.AttributeType.STRING },
         projectionType: dynamodb.ProjectionType.ALL,
-      });
-    }
+      })),
+    });
 
     this.userPool = new cognito.UserPool(this, 'UserPool', {
       userPoolName: `${prefix}-users`,

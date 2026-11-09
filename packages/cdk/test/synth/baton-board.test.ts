@@ -103,25 +103,34 @@ describe('synthesis', () => {
     expect(agent?.Properties.AuthorizationType).toBe('CUSTOM');
   });
 
-  test('the table is on-demand with the AWS-owned key, point-in-time recovery, TTL and three indexes', () => {
-    template.hasResourceProperties('AWS::DynamoDB::Table', {
+  test('the table is a TableV2 on demand with the AWS-owned key, point-in-time recovery, TTL and three indexes, in one region', () => {
+    template.resourceCountIs('AWS::DynamoDB::Table', 0);
+    template.hasResourceProperties('AWS::DynamoDB::GlobalTable', {
       BillingMode: 'PAY_PER_REQUEST',
       KeySchema: [
         { AttributeName: 'PK', KeyType: 'HASH' },
         { AttributeName: 'SK', KeyType: 'RANGE' },
       ],
-      PointInTimeRecoverySpecification: { PointInTimeRecoveryEnabled: true },
       TimeToLiveSpecification: { AttributeName: 'ttl', Enabled: true },
-      DeletionProtectionEnabled: true,
       GlobalSecondaryIndexes: [
         Match.objectLike({ IndexName: 'GSI1' }),
         Match.objectLike({ IndexName: 'GSI2' }),
         Match.objectLike({ IndexName: 'GSI3' }),
       ],
+      // The stack's own region and no other: a second replica would bill replicated writes.
+      Replicas: [
+        Match.objectLike({
+          Region: 'us-west-2',
+          PointInTimeRecoverySpecification: { PointInTimeRecoveryEnabled: true },
+          DeletionProtectionEnabled: true,
+        }),
+      ],
     });
     // `SSEEnabled: false` is how CloudFormation spells the AWS-owned key; a managed or customer key would say KMS.
-    template.hasResourceProperties('AWS::DynamoDB::Table', { SSESpecification: Match.exact({ SSEEnabled: false }) });
-    template.hasResource('AWS::DynamoDB::Table', { DeletionPolicy: 'Retain' });
+    template.hasResourceProperties('AWS::DynamoDB::GlobalTable', {
+      SSESpecification: Match.exact({ SSEEnabled: false }),
+    });
+    template.hasResource('AWS::DynamoDB::GlobalTable', { DeletionPolicy: 'Retain' });
   });
 
   test('cost policy: nothing with a standing charge', () => {
@@ -265,7 +274,9 @@ describe('options', () => {
 
   test('protectData: false lets the stack delete the data, and leaves no retained resource', () => {
     const { template } = synth({ protectData: false });
-    template.hasResourceProperties('AWS::DynamoDB::Table', { DeletionProtectionEnabled: false });
+    template.hasResourceProperties('AWS::DynamoDB::GlobalTable', {
+      Replicas: [Match.objectLike({ DeletionProtectionEnabled: false })],
+    });
     const retained = Object.entries(template.toJSON().Resources as Record<string, any>).filter(
       ([, r]) => r.DeletionPolicy === 'Retain',
     );
