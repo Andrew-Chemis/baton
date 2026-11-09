@@ -1,42 +1,53 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
+import { messageOf } from './api.ts';
+import { notify } from './toast.tsx';
 
 export interface Loaded<T> {
   data: T | undefined;
   error: string | undefined;
-  loading: boolean;
   reload: () => Promise<void>;
-  /** Replaces the data now, for an optimistic change; the next load overwrites it. */
-  set: (next: T) => void;
 }
 
-/** Loads on mount and whenever `key` changes, then every `ms` while the page is visible. */
+/**
+ * Loads on mount and whenever `key` changes, then every `ms` while the page is visible. A tick is skipped while the last
+ * request is still out. An answer identical to the one on screen leaves `data` as it is, so what is derived from it is not
+ * worked out again; the page still renders, so the relative times on it keep moving.
+ */
 export function usePoll<T>(load: () => Promise<T>, key: string, ms = 15_000): Loaded<T> {
   const [data, setData] = useState<T | undefined>();
   const [error, setError] = useState<string | undefined>();
-  const [loading, setLoading] = useState(true);
+  const [, setUnchanged] = useState(0);
   const latest = useRef(0);
+  const shown = useRef<string | undefined>(undefined);
+  const inFlight = useRef(false);
   const loader = useRef(load);
   loader.current = load;
 
   const reload = useCallback(async () => {
     const ticket = ++latest.current;
+    inFlight.current = true;
     try {
       const next = await loader.current();
       if (ticket !== latest.current) return;
-      setData(next);
+      const json = JSON.stringify(next);
+      if (json === shown.current) {
+        setUnchanged((n) => n + 1);
+      } else {
+        shown.current = json;
+        setData(next);
+      }
       setError(undefined);
     } catch (caught) {
       if (ticket === latest.current) setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
-      if (ticket === latest.current) setLoading(false);
+      if (ticket === latest.current) inFlight.current = false;
     }
   }, []);
 
   useEffect(() => {
-    setLoading(true);
     void reload();
     const timer = setInterval(() => {
-      if (!document.hidden) void reload();
+      if (!document.hidden && !inFlight.current) void reload();
     }, ms);
     const visible = () => {
       if (!document.hidden) void reload();
@@ -49,9 +60,21 @@ export function usePoll<T>(load: () => Promise<T>, key: string, ms = 15_000): Lo
     };
   }, [key, ms, reload]);
 
-  const set = useCallback((next: T) => {
-    latest.current += 1;
-    setData(next);
+  return { data, error, reload };
+}
+
+/** For a click or a submit: busy while `run` works, and a toast in the board's own words when it fails. */
+export function useAction(): { busy: boolean; run: (fn: () => Promise<unknown>) => Promise<void> } {
+  const [busy, setBusy] = useState(false);
+  const run = useCallback(async (fn: () => Promise<unknown>) => {
+    setBusy(true);
+    try {
+      await fn();
+    } catch (error) {
+      notify(messageOf(error));
+    } finally {
+      setBusy(false);
+    }
   }, []);
-  return { data, error, loading, reload, set };
+  return { busy, run };
 }

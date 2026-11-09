@@ -5,21 +5,22 @@ import { ago, span, when } from './util.ts';
 
 export type BadgeKind = 'claimed' | 'stale' | 'unowned' | 'reopened' | 'unread';
 
+export const ICON: Record<BadgeKind, JSX.Element> = {
+  claimed: <ClaimedIcon />,
+  stale: <StaleIcon />,
+  unowned: <UnownedIcon />,
+  reopened: <ReopenedIcon />,
+  unread: <UnreadIcon />,
+};
+
 export function Badge(props: {
   kind: BadgeKind;
   children: JSX.Element | string | (JSX.Element | string)[];
   title?: string;
 }) {
-  const icon = {
-    claimed: <ClaimedIcon />,
-    stale: <StaleIcon />,
-    unowned: <UnownedIcon />,
-    reopened: <ReopenedIcon />,
-    unread: <UnreadIcon />,
-  }[props.kind];
   return (
     <span class={`badge ${props.kind}`} title={props.title} data-badge={props.kind}>
-      {icon}
+      {ICON[props.kind]}
       <span class="badge-text">{props.children}</span>
     </span>
   );

@@ -1,7 +1,7 @@
 // Cognito hosted-UI sign-in: authorization code with PKCE, tokens kept in this browser, refreshed before they expire. The
 // API is called with the ID token, which carries the email the board shows as the author of a comment.
 import type { AppConfig } from './types.ts';
-import { randomId, store } from './util.ts';
+import { store } from './util.ts';
 
 interface Tokens {
   idToken: string;
@@ -148,5 +148,3 @@ export function signOut(config: AppConfig, to: (url: string) => void = go): void
     to('/');
   }
 }
-
-export { randomId };

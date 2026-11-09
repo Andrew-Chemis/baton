@@ -28,17 +28,11 @@ export function navigate(to: string, replace = false): void {
   listeners.forEach((l) => l());
 }
 
-export function Link(props: {
-  href: string;
-  class?: string;
-  children: ComponentChildren;
-  title?: string;
-}): JSX.Element {
+export function Link(props: { href: string; class?: string; children: ComponentChildren }): JSX.Element {
   return (
     <a
       href={props.href}
       class={props.class}
-      title={props.title}
       onClick={(event) => {
         if (
           event.defaultPrevented ||

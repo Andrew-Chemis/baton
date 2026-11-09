@@ -1,5 +1,6 @@
 import { useState } from 'preact/hooks';
-import { api, messageOf } from './api.ts';
+import { api } from './api.ts';
+import { useAction } from './hooks.ts';
 import { navigate } from './router.tsx';
 import { notify } from './toast.tsx';
 import type { ProjectView } from './types.ts';
@@ -8,19 +9,13 @@ export function ProjectSettings(props: { project: ProjectView; onChanged: () => 
   const { project } = props;
   const [name, setName] = useState(project.name);
   const [repo, setRepo] = useState('');
-  const [busy, setBusy] = useState(false);
-  const run = async (fn: () => Promise<unknown>, done?: string) => {
-    setBusy(true);
-    try {
+  const { busy, run: act } = useAction();
+  const run = (fn: () => Promise<unknown>, done?: string) =>
+    act(async () => {
       await fn();
       if (done) notify(done, 'info');
       props.onChanged();
-    } catch (error) {
-      notify(messageOf(error));
-    } finally {
-      setBusy(false);
-    }
-  };
+    });
   return (
     <section class="panel settings" aria-label="Project settings">
       <h2>Project settings</h2>

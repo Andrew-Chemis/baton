@@ -1,11 +1,8 @@
 // The wire types come from the service, which owns them; the web app imports them as types and the column list as a value.
 export type {
-  ActorKind,
-  AgentTokenView,
   AgentView,
   ApiErrorBody,
   CardView,
-  ClaimView,
   Column,
   EventView,
   ProjectCounts,

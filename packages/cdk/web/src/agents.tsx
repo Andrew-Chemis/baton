@@ -1,6 +1,7 @@
 import { useState } from 'preact/hooks';
-import { api, messageOf } from './api.ts';
-import { usePoll } from './hooks.ts';
+import { api } from './api.ts';
+import { ErrorNote } from './error-note.tsx';
+import { useAction, usePoll } from './hooks.ts';
 import { notify } from './toast.tsx';
 import type { AgentView } from './types.ts';
 import { ago, when } from './util.ts';
@@ -14,24 +15,17 @@ export function Agents() {
   const agents = usePoll(() => api.get<{ agents: AgentView[] }>('/agents'), 'agents', 30_000);
   const [name, setName] = useState('');
   const [issued, setIssued] = useState<Issued | null>(null);
-  const [busy, setBusy] = useState(false);
+  const { busy, run: act } = useAction();
 
-  const run = async (fn: () => Promise<unknown>) => {
-    setBusy(true);
-    try {
+  const run = (fn: () => Promise<unknown>) =>
+    act(async () => {
       await fn();
       await agents.reload();
-    } catch (error) {
-      notify(messageOf(error));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const issue = (agent: AgentView, label: string) =>
-    run(async () => {
-      const made = await api.post<{ token: string; agentId: string }>(`/agents/${agent.id}/tokens`, { label });
-      setIssued({ agentId: made.agentId, token: made.token });
     });
+  const issueToken = async (agentId: string, label: string) => {
+    const made = await api.post<{ token: string; agentId: string }>(`/agents/${agentId}/tokens`, { label });
+    setIssued({ agentId: made.agentId, token: made.token });
+  };
 
   return (
     <main class="page">
@@ -69,11 +63,7 @@ export function Agents() {
         </section>
       ) : null}
 
-      {agents.error ? (
-        <p class="error" role="alert">
-          {agents.error}
-        </p>
-      ) : null}
+      <ErrorNote text={agents.error} />
       <ul class="agents">
         {(agents.data?.agents ?? []).map((a) => (
           <li key={a.id} class="agent" data-agent={a.id}>
@@ -83,7 +73,11 @@ export function Agents() {
                 created {ago(a.createdAt)}
               </span>
               <span class="grow" />
-              <button type="button" disabled={busy} onClick={() => void issue(a, `token ${a.tokens.length + 1}`)}>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void run(() => issueToken(a.id, `token ${a.tokens.length + 1}`))}
+              >
                 New token
               </button>
               <button
@@ -133,10 +127,7 @@ export function Agents() {
           void run(async () => {
             const made = await api.post<{ agent: AgentView }>('/agents', { name });
             setName('');
-            const token = await api.post<{ token: string; agentId: string }>(`/agents/${made.agent.id}/tokens`, {
-              label: 'first token',
-            });
-            setIssued({ agentId: token.agentId, token: token.token });
+            await issueToken(made.agent.id, 'first token');
           });
         }}
       >

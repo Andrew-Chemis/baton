@@ -1,5 +1,6 @@
 // Requirement 10: many projects, one dashboard.
 import { describe, expect, test } from 'vitest';
+import { tally } from '../../web/src/counts.ts';
 import { MINUTE, claimBody, newBoard, newCard, seeded } from '../support/board.ts';
 
 describe('R10 registering projects and repos', () => {
@@ -200,5 +201,11 @@ describe('R10.4 the dashboard', () => {
       inReview: 0,
     });
     expect(review.state).toBe('unclaimed');
+
+    // The board page works the five counts out from the cards it lists, not from this endpoint, and they must come out the
+    // same, whether or not archived cards were asked for.
+    const { total: _total, inReview: _inReview, ...five } = counts.counts;
+    expect(tally((await human.get(`/cards?project=${counts.id}`)).body.cards)).toEqual(five);
+    expect(tally((await human.get(`/cards?project=${counts.id}&archived=1`)).body.cards)).toEqual(five);
   });
 });

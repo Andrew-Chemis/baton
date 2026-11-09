@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { ClaimedIcon } from './icons.tsx';
-import { api, messageOf } from './api.ts';
+import { api } from './api.ts';
 import { CardBadges } from './badges.tsx';
-import { usePoll } from './hooks.ts';
-import { notify } from './toast.tsx';
+import { ErrorNote } from './error-note.tsx';
+import { useAction, usePoll } from './hooks.ts';
 import { COLUMNS, type CardView, type Column, type EventView } from './types.ts';
 import { ago, COLUMN_LABEL, span, when } from './util.ts';
 
@@ -80,11 +80,7 @@ export function Drawer(props: { cardId: string; onClose: () => void; onChanged: 
             ×
           </button>
         </header>
-        {detail.error ? (
-          <p class="error" role="alert">
-            {detail.error}
-          </p>
-        ) : null}
+        <ErrorNote text={detail.error} />
         {card ? (
           <div class="drawer-body">
             <CardBadges card={card} now={Date.now()} />
@@ -184,22 +180,17 @@ function Facts({ card }: { card: CardView }) {
 function EditForm({ card, onSaved }: { card: CardView; onSaved: () => Promise<void> }) {
   const [title, setTitle] = useState(card.title);
   const [body, setBody] = useState(card.body ?? '');
-  const [busy, setBusy] = useState(false);
+  const { busy, run } = useAction();
   const dirty = title !== card.title || body !== (card.body ?? '');
   const save = async (event: Event) => {
     event.preventDefault();
-    setBusy(true);
-    try {
+    await run(async () => {
       await api.patch(`/cards/${card.id}`, {
         ...(title !== card.title ? { title } : {}),
         ...(body !== (card.body ?? '') ? { body } : {}),
       });
       await onSaved();
-    } catch (error) {
-      notify(messageOf(error));
-    } finally {
-      setBusy(false);
-    }
+    });
   };
   return (
     <form onSubmit={save} class="edit">
@@ -221,18 +212,12 @@ function EditForm({ card, onSaved }: { card: CardView; onSaved: () => Promise<vo
 }
 
 function MoveArchive({ card, onChanged }: { card: CardView; onChanged: () => Promise<void> }) {
-  const [busy, setBusy] = useState(false);
-  const run = async (fn: () => Promise<unknown>) => {
-    setBusy(true);
-    try {
+  const { busy, run: act } = useAction();
+  const run = (fn: () => Promise<unknown>) =>
+    act(async () => {
       await fn();
       await onChanged();
-    } catch (error) {
-      notify(messageOf(error));
-    } finally {
-      setBusy(false);
-    }
-  };
+    });
   return (
     <div class="row move-row">
       <label class="field">
@@ -273,20 +258,15 @@ function MoveArchive({ card, onChanged }: { card: CardView; onChanged: () => Pro
 
 function CommentBox({ cardId, onPosted }: { cardId: string; onPosted: () => Promise<void> }) {
   const [text, setText] = useState('');
-  const [busy, setBusy] = useState(false);
+  const { busy, run } = useAction();
   const post = async (event?: Event) => {
     event?.preventDefault();
     if (!text.trim()) return;
-    setBusy(true);
-    try {
+    await run(async () => {
       await api.post(`/cards/${cardId}/comments`, { text });
       setText('');
       await onPosted();
-    } catch (error) {
-      notify(messageOf(error));
-    } finally {
-      setBusy(false);
-    }
+    });
   };
   return (
     <form onSubmit={post} class="comment-box">

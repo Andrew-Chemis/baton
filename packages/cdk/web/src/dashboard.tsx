@@ -1,6 +1,8 @@
 import { useState } from 'preact/hooks';
-import { ApiError, api, messageOf } from './api.ts';
-import { ClaimedIcon, ReopenedIcon, StaleIcon, UnownedIcon, UnreadIcon } from './icons.tsx';
+import { api, messageOf } from './api.ts';
+import { ICON, type BadgeKind } from './badges.tsx';
+import { COUNT_KINDS } from './counts.ts';
+import { ErrorNote } from './error-note.tsx';
 import { usePoll } from './hooks.ts';
 import { Link, navigate } from './router.tsx';
 import type { ProjectCounts, ProjectView } from './types.ts';
@@ -18,17 +20,10 @@ export function ordered(projects: ProjectView[]): ProjectView[] {
   );
 }
 
-function Chip(props: { kind: 'claimed' | 'stale' | 'unowned' | 'reopened' | 'unread'; n: number }) {
-  const icon = {
-    claimed: <ClaimedIcon />,
-    stale: <StaleIcon />,
-    unowned: <UnownedIcon />,
-    reopened: <ReopenedIcon />,
-    unread: <UnreadIcon />,
-  }[props.kind];
+function Chip(props: { kind: BadgeKind; n: number }) {
   return (
     <li class={`chip ${props.kind}${props.n ? '' : ' zero'}`} data-count={props.kind}>
-      {icon}
+      {ICON[props.kind]}
       <span class="chip-n">{props.n}</span> <span class="chip-label">{props.kind}</span>
     </li>
   );
@@ -40,11 +35,7 @@ export function Dashboard() {
   return (
     <main class="page">
       <h1>Projects</h1>
-      {projects.error ? (
-        <p class="error" role="alert">
-          {projects.error}
-        </p>
-      ) : null}
+      <ErrorNote text={projects.error} />
       {projects.data && list.length === 0 ? (
         <p class="empty-state">
           No projects yet. Register one below, or run <code>baton project register --name "..."</code> from a checkout.
@@ -74,11 +65,9 @@ export function Dashboard() {
               </div>
               {c ? (
                 <ul class="counts" aria-label={`${p.name} summary`}>
-                  <Chip kind="claimed" n={c.claimed} />
-                  <Chip kind="stale" n={c.stale} />
-                  <Chip kind="unowned" n={c.unowned} />
-                  <Chip kind="reopened" n={c.reopened} />
-                  <Chip kind="unread" n={c.unread} />
+                  {COUNT_KINDS.map((kind) => (
+                    <Chip key={kind} kind={kind} n={c[kind]} />
+                  ))}
                 </ul>
               ) : null}
               <div class="last">
@@ -117,7 +106,7 @@ function RegisterForm(props: { onRegistered: () => Promise<void> }) {
       await props.onRegistered();
       navigate(`/p/${encodeURIComponent(made.project.id)}`);
     } catch (error) {
-      setProblem(error instanceof ApiError ? error.message : messageOf(error));
+      setProblem(messageOf(error));
     } finally {
       setBusy(false);
     }
@@ -139,11 +128,7 @@ function RegisterForm(props: { onRegistered: () => Promise<void> }) {
           placeholder={'owner/name\nor a clone URL, one per line'}
         />
       </label>
-      {problem ? (
-        <p class="error" role="alert">
-          {problem}
-        </p>
-      ) : null}
+      <ErrorNote text={problem} />
       <div class="actions">
         <button type="submit" class="primary" disabled={busy}>
           Register project

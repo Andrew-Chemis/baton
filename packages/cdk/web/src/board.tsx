@@ -1,33 +1,23 @@
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useMemo, useRef, useState } from 'preact/hooks';
+import { comparePos } from '../../service/rank.ts';
 import { api, messageOf } from './api.ts';
 import { CardTile, type TilePointerEvent } from './card-tile.tsx';
+import { tally } from './counts.ts';
 import { Drawer } from './drawer.tsx';
-import { comparePos } from '../../service/rank.ts';
-import { positionAt, slotAt } from './dnd.ts';
-import { usePoll } from './hooks.ts';
+import { positionAt, useCardDrag, type Drag } from './dnd.ts';
+import { ErrorNote } from './error-note.tsx';
+import { useAction, usePoll } from './hooks.ts';
 import { Link, navigate, type Route } from './router.tsx';
 import { ProjectSettings } from './settings.tsx';
 import { notify } from './toast.tsx';
 import { COLUMNS, type CardView, type Column, type ProjectView } from './types.ts';
 import { COLUMN_LABEL } from './util.ts';
 
-interface Drag {
-  card: CardView;
-  x: number;
-  y: number;
-  dx: number;
-  dy: number;
-  width: number;
-  col: Column | null;
-  index: number;
-}
-
 interface Pending {
   column: Column;
   pos: string | undefined;
 }
 
-const THRESHOLD = 5;
 /** Sorts after any real position: a card whose move has no position yet waits at the end of its column. */
 const END = String.fromCharCode(0xffff);
 
@@ -38,25 +28,10 @@ export function Board(props: { projectId: string; route: Route }) {
   const [archived, setArchived] = useState(false);
   const [panel, setPanel] = useState<'new' | 'settings' | null>(null);
   const [pending, setPending] = useState<Record<string, Pending>>({});
-  const [drag, setDrag] = useState<Drag | null>(null);
-  const press = useRef<{
-    id: string;
-    pointerId: number;
-    x: number;
-    y: number;
-    dx: number;
-    dy: number;
-    width: number;
-    active: boolean;
-    cancelled: boolean;
-    /** Where the pointer is over now, kept here as well as in `drag` so a release needs no re-render to know it. */
-    col: Column | null;
-    index: number;
-  } | null>(null);
-  const suppressClick = useRef(false);
   const scroller = useRef<HTMLDivElement>(null);
 
-  const projects = usePoll(() => api.get<{ projects: ProjectView[] }>('/projects'), 'projects');
+  // Counts are worked out from the cards below, so the board does not ask the API for them.
+  const projects = usePoll(() => api.get<{ projects: ProjectView[] }>('/projects?counts=0'), 'projects');
   const cards = usePoll(
     () =>
       api.get<{ cards: CardView[] }>(`/cards?project=${encodeURIComponent(projectId)}${archived ? '&archived=1' : ''}`),
@@ -64,6 +39,12 @@ export function Board(props: { projectId: string; route: Route }) {
   );
   const project = projects.data?.projects.find((p) => p.id === projectId);
   const now = Date.now();
+  // Cards and project move together: after a change, both are read again. The cards come back first.
+  const reloadAll = () => {
+    const loaded = cards.reload();
+    void projects.reload();
+    return loaded;
+  };
 
   const columns = useMemo(() => {
     const merged: CardView[] = [];
@@ -85,8 +66,7 @@ export function Board(props: { projectId: string; route: Route }) {
     setPending((p) => ({ ...p, [card.id]: { column: col, pos } }));
     try {
       await api.post(`/cards/${card.id}/move`, { to: col, ...(pos ? { pos } : {}) });
-      await cards.reload();
-      void projects.reload();
+      await reloadAll();
     } catch (error) {
       notify(messageOf(error));
     } finally {
@@ -97,84 +77,10 @@ export function Board(props: { projectId: string; route: Route }) {
     }
   }
 
-  function begin(event: TilePointerEvent, card: CardView) {
-    if (event.button !== 0) return;
-    const target = event.target as Element;
-    if (target.closest('a, input, select, textarea')) return;
-    // A finger starts a drag only from the grip, so the rest of the card still scrolls the board.
-    if (event.pointerType === 'touch' && !target.closest('.grip')) return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    press.current = {
-      id: card.id,
-      pointerId: event.pointerId,
-      x: event.clientX,
-      y: event.clientY,
-      dx: event.clientX - rect.left,
-      dy: event.clientY - rect.top,
-      width: rect.width,
-      active: false,
-      cancelled: false,
-      col: null,
-      index: 0,
-    };
-    event.currentTarget.setPointerCapture(event.pointerId);
-  }
-
-  function move(event: TilePointerEvent, card: CardView) {
-    const p = press.current;
-    if (!p || p.id !== card.id || p.cancelled) return;
-    if (!p.active && Math.hypot(event.clientX - p.x, event.clientY - p.y) < THRESHOLD) return;
-    p.active = true;
-    const under = document.elementFromPoint(event.clientX, event.clientY);
-    const columnEl = under?.closest<HTMLElement>('[data-col]');
-    let col: Column | null = null;
-    let index = 0;
-    if (columnEl) {
-      col = columnEl.dataset.col as Column;
-      const mids = [...columnEl.querySelectorAll<HTMLElement>('.card:not(.dragging):not(.ghost)')].map((el) => {
-        const r = el.getBoundingClientRect();
-        return r.top + r.height / 2;
-      });
-      index = slotAt(mids, event.clientY);
-    }
-    const box = scroller.current;
-    if (box) {
-      const edge = box.getBoundingClientRect();
-      if (event.clientX < edge.left + 40) box.scrollBy({ left: -14 });
-      else if (event.clientX > edge.right - 40) box.scrollBy({ left: 14 });
-    }
-    p.col = col;
-    p.index = index;
-    setDrag({ card, x: event.clientX, y: event.clientY, dx: p.dx, dy: p.dy, width: p.width, col, index });
-  }
-
-  function end(event: TilePointerEvent, card: CardView, cancelled: boolean) {
-    const p = press.current;
-    press.current = null;
-    if (!p || p.id !== card.id) return;
-    try {
-      event.currentTarget.releasePointerCapture(p.pointerId);
-    } catch {
-      // already released
-    }
-    if (!p.active && !p.cancelled) return;
-    // The browser follows a drag's pointerup with a click on the card; that click is not a request to open it.
-    suppressClick.current = true;
-    setTimeout(() => (suppressClick.current = false), 0);
-    setDrag(null);
-    if (!cancelled && !p.cancelled && p.col) void drop(card, p.col, p.index);
-  }
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && press.current?.active) {
-        press.current.cancelled = true;
-        setDrag(null);
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  const { drag, ghost, wasDrag, tileEvents } = useCardDrag({
+    scroller,
+    onDrop: (card, col, index) => void drop(card, col, index),
+  });
 
   const setQuery = (changes: Record<string, string | null>) => {
     const q = new URLSearchParams(route.query);
@@ -197,7 +103,7 @@ export function Board(props: { projectId: string; route: Route }) {
     );
   }
 
-  const counts = project?.counts;
+  const counts = cards.data ? tally(cards.data.cards) : undefined;
   return (
     <main class="page board-page">
       <div class="board-head">
@@ -258,26 +164,15 @@ export function Board(props: { projectId: string; route: Route }) {
           defaultRepo={repoFilter}
           onDone={async () => {
             setPanel(null);
-            await cards.reload();
-            void projects.reload();
+            await reloadAll();
           }}
         />
       ) : null}
       {panel === 'settings' && project ? (
-        <ProjectSettings
-          project={project}
-          onChanged={() => {
-            void projects.reload();
-            void cards.reload();
-          }}
-        />
+        <ProjectSettings project={project} onChanged={() => void reloadAll()} />
       ) : null}
 
-      {cards.error ? (
-        <p class="error" role="alert">
-          {cards.error}
-        </p>
-      ) : null}
+      <ErrorNote text={cards.error} />
 
       <div class="columns" ref={scroller} data-dragging={drag ? 'true' : undefined}>
         {columns.map(([col, list]) => (
@@ -291,48 +186,28 @@ export function Board(props: { projectId: string; route: Route }) {
               <h2>{COLUMN_LABEL[col]}</h2>
               <span class="count">{list.length}</span>
             </header>
-            <div class="column-cards">
-              {list.length === 0 && drag?.col !== col ? <p class="empty">Nothing here</p> : null}
-              {(() => {
-                const visible = list.filter((c) => c.id !== drag?.card.id);
-                const items = list.flatMap((card) => {
-                  const slot = card.id === drag?.card.id ? -1 : visible.indexOf(card);
-                  const line =
-                    drag?.col === col && slot === drag.index ? [<div class="drop-line" key={`line-${card.id}`} />] : [];
-                  return [
-                    ...line,
-                    <CardTile
-                      key={card.id}
-                      card={card}
-                      now={now}
-                      showRepo={showRepo}
-                      dragging={drag?.card.id === card.id}
-                      onOpen={() => {
-                        if (!suppressClick.current) setQuery({ card: card.id });
-                      }}
-                      onPointerDown={(e) => begin(e, card)}
-                      onPointerMove={(e) => move(e, card)}
-                      onPointerUp={(e) => end(e, card, false)}
-                      onPointerCancel={(e) => end(e, card, true)}
-                    />,
-                  ];
-                });
-                if (drag?.col === col && drag.index >= visible.length)
-                  items.push(<div class="drop-line" key="line-end" />);
-                return items;
-              })()}
-            </div>
+            <ColumnCards
+              col={col}
+              list={list}
+              drag={drag}
+              now={now}
+              showRepo={showRepo}
+              onOpen={(card) => {
+                if (!wasDrag()) setQuery({ card: card.id });
+              }}
+              tileEvents={tileEvents}
+            />
           </section>
         ))}
       </div>
 
-      {drag && press.current?.active ? (
+      {ghost ? (
         <div class="ghost-layer" aria-hidden="true">
           <div
             class="ghost-pos"
-            style={{ left: `${drag.x - drag.dx}px`, top: `${drag.y - drag.dy}px`, width: `${drag.width}px` }}
+            style={{ left: `${ghost.x - ghost.dx}px`, top: `${ghost.y - ghost.dy}px`, width: `${ghost.width}px` }}
           >
-            <CardTile card={drag.card} now={now} showRepo={showRepo} ghost />
+            <CardTile card={ghost.card} now={now} showRepo={showRepo} ghost />
           </div>
         </div>
       ) : null}
@@ -342,13 +217,52 @@ export function Board(props: { projectId: string; route: Route }) {
           key={openId}
           cardId={openId}
           onClose={() => setQuery({ card: null })}
-          onChanged={() => {
-            void cards.reload();
-            void projects.reload();
-          }}
+          onChanged={() => void reloadAll()}
         />
       ) : null}
     </main>
+  );
+}
+
+/** One column's tiles, with the line that shows where a dragged card would land. */
+function ColumnCards(props: {
+  col: Column;
+  list: CardView[];
+  drag: Drag | null;
+  now: number;
+  showRepo: boolean;
+  onOpen: (card: CardView) => void;
+  tileEvents: (card: CardView) => {
+    onPointerDown: (event: TilePointerEvent) => void;
+    onPointerMove: (event: TilePointerEvent) => void;
+    onPointerUp: (event: TilePointerEvent) => void;
+    onPointerCancel: (event: TilePointerEvent) => void;
+  };
+}) {
+  const { col, list, drag } = props;
+  const visible = list.filter((c) => c.id !== drag?.card.id);
+  const items = list.flatMap((card) => {
+    const slot = card.id === drag?.card.id ? -1 : visible.indexOf(card);
+    const line = drag?.col === col && slot === drag.index ? [<div class="drop-line" key={`line-${card.id}`} />] : [];
+    return [
+      ...line,
+      <CardTile
+        key={card.id}
+        card={card}
+        now={props.now}
+        showRepo={props.showRepo}
+        dragging={drag?.card.id === card.id}
+        onOpen={() => props.onOpen(card)}
+        {...props.tileEvents(card)}
+      />,
+    ];
+  });
+  if (drag?.col === col && drag.index >= visible.length) items.push(<div class="drop-line" key="line-end" />);
+  return (
+    <div class="column-cards">
+      {list.length === 0 && drag?.col !== col ? <p class="empty">Nothing here</p> : null}
+      {items}
+    </div>
   );
 }
 
@@ -357,19 +271,14 @@ function NewCard(props: { project: ProjectView; defaultRepo: string; onDone: () 
   const [body, setBody] = useState('');
   const [repo, setRepo] = useState(props.defaultRepo || props.project.repos[0] || '');
   const [column, setColumn] = useState<Column>('backlog');
-  const [busy, setBusy] = useState(false);
+  const { busy, run } = useAction();
   const submit = async (event: Event) => {
     event.preventDefault();
     if (!title.trim() || !repo) return;
-    setBusy(true);
-    try {
+    await run(async () => {
       await api.post('/cards', { repo, title: title.trim(), body, column });
       await props.onDone();
-    } catch (error) {
-      notify(messageOf(error));
-    } finally {
-      setBusy(false);
-    }
+    });
   };
   return (
     <form class="panel new-card" onSubmit={submit}>
