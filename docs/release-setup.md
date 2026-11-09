@@ -73,7 +73,7 @@ modelled on, used a token for its first publish, so do the same:
    secret: only the publish job runs in that environment).
 3. Cut the first release and approve the environment and the staged versions as above.
 
-**Placeholder risk.** The sibling pipeline's notes say that staging a package that does not exist yet makes npm publish a
+**Placeholder risk.** The Lede pipeline's notes say that staging a package that does not exist yet makes npm publish a
 public placeholder, version `0.0.0-stage`. That was not checked here, because staging cannot be exercised without
 publishing. If it happens, the placeholder is harmless and the real version is staged next to it, but it is public. If
 you would rather avoid it, publish the first version of each package by hand instead and skip to step 6.
