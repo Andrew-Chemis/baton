@@ -64,6 +64,16 @@ describe('R6.5 and R7.1 routes reject calls that are not authenticated', () => {
     expect(out.statusCode).toBe(404);
     expect(JSON.parse(out.body).message).toContain('/api/human/nothing');
   });
+
+  test('a stray % in an address is a 400 that says so, not a 500', async () => {
+    const human = { jwt: { claims: { sub: 'u1' } } };
+    const out = await call('/api/human/cards/%zz', human);
+    expect(out.statusCode).toBe(400);
+    expect(JSON.parse(out.body)).toMatchObject({ code: 'invalid_request' });
+    expect(JSON.parse(out.body).message).toContain('%zz');
+    // A well-formed escape still decodes.
+    expect((await call('/api/human/cards/%7Enone', human)).statusCode).toBe(404);
+  });
 });
 
 describe('R7.1 tokens: issued and revoked from the board, stored only as a hash', () => {

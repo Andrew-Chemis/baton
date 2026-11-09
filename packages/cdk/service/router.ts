@@ -114,6 +114,17 @@ const ROUTES: Route[] = [
   ),
 ];
 
+/** A path segment with its %-escapes undone; a stray % is the caller's mistake, not the board's. */
+function decodeSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    throw badRequest(
+      `The address contains "${segment}", which has a % that is not followed by two hex digits. Write a literal % as %25.`,
+    );
+  }
+}
+
 function match(method: string, segments: string[]): { route: Route; params: Record<string, string> } | undefined {
   for (const r of ROUTES) {
     if (r.method !== method || r.segments.length !== segments.length) continue;
@@ -121,7 +132,7 @@ function match(method: string, segments: string[]): { route: Route; params: Reco
     const fits = r.segments.every((s, i) => {
       const actual = segments[i] as string;
       if (s.startsWith(':')) {
-        params[s.slice(1)] = decodeURIComponent(actual);
+        params[s.slice(1)] = decodeSegment(actual);
         return true;
       }
       return s === actual;
