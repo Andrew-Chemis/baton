@@ -79,6 +79,6 @@ override the package spec in the hooks for a single machine.
 
 ## What is not guaranteed
 
-The session id the board shows for a claim is `CLAUDE_SESSION_ID` when the environment has it, which Claude Code does not
-document; otherwise the CLI makes up a label (`local-<hex>`) and keeps it in the worktree's state file. Either way the holder
+The session id the board shows for a claim is `CLAUDE_CODE_SESSION_ID` when the environment has it (cloud sessions set it), then
+`CLAUDE_SESSION_ID`, neither of which Claude Code documents; otherwise the CLI makes up a label (`local-<hex>`) and keeps it in the worktree's state file. Either way the holder
 is the agent plus the worktree, so two sessions in two worktrees never share a claim.

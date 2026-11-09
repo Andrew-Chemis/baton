@@ -189,7 +189,7 @@ expired), unowned (in-progress column, no claim), reopened, unread (owner's
 pinned version, so the plugin ships no copy of it. The CLI resolves repo from
 the origin
 URL, worktree from `git rev-parse --show-toplevel`, branch from `git
-rev-parse --abbrev-ref HEAD`, and session from `CLAUDE_SESSION_ID` when set.
+rev-parse --abbrev-ref HEAD`, and session from `CLAUDE_CODE_SESSION_ID` or `CLAUDE_SESSION_ID` when set.
 Every command resolves the project through the Repo map and fails with
 `repo_unregistered` when the repo belongs to none; `baton project register
 --name <name>` creates the project or adds the repo to an existing one of
@@ -344,8 +344,8 @@ it; "docs" means a documentation page read while building, not a deployment.
     longer `timeout` (seconds; at most 60). The reference config sets 20.
   - `PostToolUse` hooks run after each tool call; the hook input carries
     `session_id` on stdin.
-  - `CLAUDE_SESSION_ID` is not documented as an environment variable, so the
-    CLI uses it when present and otherwise makes a label (`local-<hex>`) that
+  - Neither `CLAUDE_CODE_SESSION_ID` (set in cloud sessions) nor `CLAUDE_SESSION_ID`
+    is documented as an environment variable, so the CLI uses the first one set and otherwise makes a label (`local-<hex>`) that
     it keeps in the worktree's state file. The holder identity is
     `agentId#worktree` either way, never the session label.
   - A cloud session does not read the user-level `~/.claude/settings.json`; it

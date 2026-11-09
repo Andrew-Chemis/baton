@@ -128,11 +128,23 @@ describe('linked worktrees', () => {
     const human = w.board.as({ human: 'owner@example.test' });
     await human.post('/cards', { repo: REPO, title: 'Labelled', key: 'labelled' });
     const withEnv = w.repo();
-    const a = await w.baton(['take', 'labelled'], { cwd: withEnv, env: { CLAUDE_SESSION_ID: 'session_abc' } });
+    const a = await w.baton(['take', 'labelled'], {
+      cwd: withEnv,
+      env: { CLAUDE_CODE_SESSION_ID: 'session_abc', CLAUDE_SESSION_ID: 'session_other' },
+    });
     expect(a.json.card.claim.session).toBe('session_abc');
+    await human.post('/cards', { repo: REPO, title: 'Older', key: 'older' });
+    const older = await w.baton(['take', 'older'], {
+      cwd: w.repo(),
+      env: { CLAUDE_CODE_SESSION_ID: '', CLAUDE_SESSION_ID: 'session_old' },
+    });
+    expect(older.json.card.claim.session).toBe('session_old');
     await human.post('/cards', { repo: REPO, title: 'Made', key: 'made' });
     const without = w.repo();
-    const b = await w.baton(['take', 'made'], { cwd: without });
+    const b = await w.baton(['take', 'made'], {
+      cwd: without,
+      env: { CLAUDE_CODE_SESSION_ID: '', CLAUDE_SESSION_ID: '' },
+    });
     const label = b.json.card.claim.session;
     expect(label).toMatch(/^local-[0-9a-f]{12}$/);
     const c = await w.baton(['check', 'made'], { cwd: without });

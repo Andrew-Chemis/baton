@@ -12,7 +12,7 @@ export interface HeldCard {
 }
 
 export interface WorktreeState {
-  /** The session label sent with claims: CLAUDE_SESSION_ID when set, else made once here. */
+  /** The session label sent with claims: CLAUDE_CODE_SESSION_ID, else CLAUDE_SESSION_ID, else made once here. */
   session: string;
   held: HeldCard | null;
   /** card id -> the sequence `baton check` last showed for it. */
@@ -32,7 +32,8 @@ export async function readState(path: string): Promise<WorktreeState | undefined
 }
 
 export const freshState = (env: NodeJS.ProcessEnv): WorktreeState => ({
-  session: env.CLAUDE_SESSION_ID?.trim() || `local-${randomBytes(6).toString('hex')}`,
+  session:
+    env.CLAUDE_CODE_SESSION_ID?.trim() || env.CLAUDE_SESSION_ID?.trim() || `local-${randomBytes(6).toString('hex')}`,
   held: null,
   checked: {},
 });
