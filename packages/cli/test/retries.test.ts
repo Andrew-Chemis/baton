@@ -94,12 +94,14 @@ describe('retries', () => {
     expect(refused.seen.filter((s) => s.path.endsWith('/claim'))).toHaveLength(1);
   });
 
-  test('a board that cannot be reached says the request is safe to repeat', async () => {
+  test('a board that cannot be reached says retries share a key, and which commands can post twice if run again', async () => {
     const down: typeof fetch = () => Promise.reject(new TypeError('fetch failed'));
     const result = await w.baton(['check'], { cwd: checkout, fetch: down });
     expect(result.code).toBe(1);
     expect(result.error.code).toBe('unreachable');
-    expect(result.error.message).toMatch(/safe to repeat/);
+    expect(result.error.message).toMatch(/reuse one idempotency key/);
+    expect(result.error.message).toMatch(/before repeating a `comment`, or a `create` without `--key`/);
+    expect(result.error.message).not.toMatch(/safe to repeat/);
     expect(result.error.message).toMatch(/BATON_URL/);
   });
 

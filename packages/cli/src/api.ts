@@ -1,5 +1,6 @@
-// The HTTP client. Every write carries an Idempotency-Key that stays the same across retries, so a request whose answer was
-// lost on the way back is answered from the board's record instead of being done twice.
+// The HTTP client. Every write carries an Idempotency-Key that stays the same across the retries inside one run, so a request
+// whose answer was lost on the way back is answered from the board's record instead of being done twice. A new run makes a new
+// key: running `comment`, or `create` without `--key`, again after a lost answer can post twice.
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { CliError } from './git.ts';
@@ -110,7 +111,7 @@ export class Api {
     /* oxlint-enable eslint/no-await-in-loop */
     throw new CliError(
       'unreachable',
-      `Could not reach the board at ${url} (${lastProblem}). The request is safe to repeat: writes carry an idempotency key. Check BATON_URL and the network, then run the command again.`,
+      `Could not reach the board at ${url} (${lastProblem}). Retries inside this run reuse one idempotency key, so they never write twice; running the command again starts a new key. If the board may have received the request, look at the card before repeating a \`comment\`, or a \`create\` without \`--key\`, or it can be posted twice. Check BATON_URL and the network, then run the command again.`,
       1,
     );
   }

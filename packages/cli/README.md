@@ -36,7 +36,7 @@ Create an agent and a token on the board's Agents page.
 | `pass`                           | release the card as done and move it to In review                                    |
 | `drop --reason paused\|blocked`  | release the card where it is                                                         |
 
-Exit codes: 0 done; 1 the board refused or could not be reached (repeating is safe: writes carry an idempotency key); 2 the
+Exit codes: 0 done; 1 the board refused or could not be reached (retries inside one run reuse one idempotency key; running a command again is safe except `comment` and a `create` without `--key`, which can post twice: check the card first); 2 the
 command could not start (not a git checkout, no token).
 
 `baton hook heartbeat` and `baton hook stop` are for Claude Code hooks; they never fail the session. The repository ships

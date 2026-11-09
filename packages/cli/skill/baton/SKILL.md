@@ -26,4 +26,4 @@ A board of cards with one owner at a time. You take a card before you edit, huma
 - `taken over` means your lease ran out and another agent holds the card now. Stop, `baton check`, and ask in a comment before touching its branch.
 - A card that comes back from a human (moved to an earlier column) is marked reopened: read its comments first, the earlier work was not accepted.
 - A refusal is the answer, not an error to route around. `unacked_comments`: check, read, ack, pass again. `repo_unregistered`: `baton project register --name "<project>"`.
-- Exit 0 done, 1 the board refused or could not be reached (repeating the command is safe), 2 the command could not start (not a git checkout, no token).
+- Exit 0 done, 1 the board refused or could not be reached (retries inside one run never write twice; running the command again is safe except `baton comment` and a `baton create` without `--key`, which can post twice, so look at the card before repeating those), 2 the command could not start (not a git checkout, no token).
