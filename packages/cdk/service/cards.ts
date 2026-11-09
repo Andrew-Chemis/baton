@@ -287,7 +287,8 @@ export async function listEvents(
 /** Human events after `since`, for the claim response. */
 export async function pendingHumanEvents(deps: Deps, card: CardItem): Promise<EventView[]> {
   const all = await listEvents(deps, card.id, card.ackedSeq, 500);
-  return all.events.filter((e) => e.actor.kind === 'human');
+  // The creating event is not steering: nothing in it asks the agent to do anything.
+  return all.events.filter((e) => e.actor.kind === 'human' && e.type !== 'created');
 }
 
 export type MoveTarget = { to: Column; pos: string };
