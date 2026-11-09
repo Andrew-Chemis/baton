@@ -2,7 +2,16 @@
 import { GSI1, GSI2, GSI3 } from '../src/schema.ts';
 import { COLUMNS, type Actor, type CardView, type Column, type EventView } from './api-types.ts';
 import { between, comparePos, isPos } from './rank.ts';
-import { appendEvents, endedClaim, isSteering, keyed, toCardView, toEventView, type CardFields } from './card-model.ts';
+import {
+  endedClaim,
+  isSteering,
+  keyed,
+  toCardView,
+  toEventView,
+  withEvents,
+  type CardFields,
+  type EventSpec,
+} from './card-model.ts';
 import { cardOp, loadCard } from './card-op.ts';
 import { execute, type Reply, type RequestCtx } from './engine.ts';
 import { ApiError, badRequest, forbidden } from './errors.ts';
@@ -68,7 +77,10 @@ export async function createCard(deps: Deps, ctx: RequestCtx, input: unknown): P
   const slug = parseSlug(body.key, repo);
   const key = slug ? `${repo}/${slug}` : undefined;
   return execute(deps, ctx, async (now) => {
-    const mapped = await getItem<{ projectId: string }>(deps, repoKey(repo));
+    const [mapped, existing] = await Promise.all([
+      getItem<{ projectId: string }>(deps, repoKey(repo)),
+      key ? getItem<{ cardId: string }>(deps, cardKeyItem(key)) : undefined,
+    ]);
     if (!mapped) {
       throw new ApiError(
         409,
@@ -76,12 +88,9 @@ export async function createCard(deps: Deps, ctx: RequestCtx, input: unknown): P
         `Repo ${repo} belongs to no project, so a card cannot be created for it. Register it: run \`baton project register --name <project>\` from a checkout of the repo, or use the dashboard's register form.`,
       );
     }
-    if (key) {
-      const existing = await getItem<{ cardId: string }>(deps, cardKeyItem(key));
-      if (existing) {
-        const card = await loadCard(deps, existing.cardId);
-        return { items: [], reply: { status: 200, body: { card: toCardView(card, now, true), created: false } } };
-      }
+    if (existing) {
+      const card = await loadCard(deps, existing.cardId);
+      return { items: [], reply: { status: 200, body: { card: toCardView(card, now, true), created: false } } };
     }
     const projectId = mapped.projectId;
     const id = newId(now);
@@ -104,10 +113,10 @@ export async function createCard(deps: Deps, ctx: RequestCtx, input: unknown): P
       createdAt: now,
       updatedAt: now,
     };
-    const { events, seq } = appendEvents(fields, ctx.actor, now, [
+    const { next, events } = withEvents(fields, ctx.actor, now, [
       { type: 'created', payload: { title, column, ...(key ? { key } : {}) } },
     ]);
-    const card = keyed({ ...fields, seq });
+    const card = keyed(next);
     const items: TransactItem[] = [
       putNew(card),
       ...events.map(putNew),
@@ -196,32 +205,21 @@ export function patchCard(deps: Deps, ctx: RequestCtx, id: string, input: unknow
     if (title !== undefined && title !== card.title) changed.title = title;
     if (cardBody !== undefined && cardBody !== card.body) changed.body = cardBody;
     if (links !== undefined && JSON.stringify(links) !== JSON.stringify(card.links)) changed.links = links;
-    if (Object.keys(changed).length === 0) return { next: card, noop: true, respond: (view) => ({ card: view }) };
-    const { events, seq, lastHumanSeq } = appendEvents(card, ctx.actor, now, [{ type: 'edited', payload: changed }]);
-    return {
-      next: {
-        ...card,
-        title: title ?? card.title,
-        body: cardBody ?? card.body,
-        links: links ?? card.links,
-        seq,
-        lastHumanSeq,
-        updatedAt: now,
-      },
-      events,
-      respond: (view) => ({ card: view }),
-    };
+    if (Object.keys(changed).length === 0) return { next: card, noop: true };
+    return withEvents(card, ctx.actor, now, [{ type: 'edited', payload: changed }], {
+      title: title ?? card.title,
+      body: cardBody ?? card.body,
+      links: links ?? card.links,
+    });
   });
 }
 
 export function commentCard(deps: Deps, ctx: RequestCtx, id: string, input: unknown): Promise<Reply> {
   const textBody = requiredText(asObject(input).text, 'text', 10_000).trim();
   return cardOp(deps, ctx, id, (card, now) => {
-    const { events, seq, lastHumanSeq } = appendEvents(card, ctx.actor, now, [
-      { type: 'commented', payload: { text: textBody } },
-    ]);
+    const { next, events } = withEvents(card, ctx.actor, now, [{ type: 'commented', payload: { text: textBody } }]);
     return {
-      next: { ...card, seq, lastHumanSeq, updatedAt: now },
+      next,
       events,
       status: 201,
       respond: (view) => ({ card: view, event: toEventView(events[0] as EventItem) }),
@@ -231,24 +229,24 @@ export function commentCard(deps: Deps, ctx: RequestCtx, id: string, input: unkn
 
 export function archiveCard(deps: Deps, ctx: RequestCtx, id: string): Promise<Reply> {
   return cardOp(deps, ctx, id, (card, now) => {
-    if (card.archived) return { next: card, noop: true, respond: (view) => ({ card: view }) };
-    const specs: { type: 'edited' | 'released'; payload: Record<string, unknown> }[] = [
-      { type: 'edited', payload: { archived: true } },
-    ];
+    if (card.archived) return { next: card, noop: true };
+    const specs: EventSpec[] = [{ type: 'edited', payload: { archived: true } }];
     if (card.claim) specs.push({ type: 'released', payload: { reason: 'archived' } });
-    const { events, seq, lastHumanSeq } = appendEvents(card, ctx.actor, now, specs);
-    return {
-      next: {
-        ...card,
-        archived: true,
-        ...(card.claim ? { claim: undefined, lastClaim: endedClaim(card.claim, now, 'archived', 'archived') } : {}),
-        seq,
-        lastHumanSeq,
-        updatedAt: now,
-      },
-      events,
-      respond: (view) => ({ card: view }),
-    };
+    return withEvents(card, ctx.actor, now, specs, {
+      archived: true,
+      ...(card.claim ? { claim: undefined, lastClaim: endedClaim(card.claim, now, 'archived', 'archived') } : {}),
+    });
+  });
+}
+
+/** The events of `card` after sequence `since`, oldest first. */
+function eventsAfter(deps: Deps, card: CardItem, since: number, limit: number): Promise<EventItem[]> {
+  const { lo, hi } = eventRange(since);
+  return queryAll<EventItem>(deps, {
+    KeyConditionExpression: '#pk = :pk AND #sk BETWEEN :lo AND :hi',
+    ExpressionAttributeNames: { '#pk': 'PK', '#sk': 'SK' },
+    ExpressionAttributeValues: { ':pk': card.PK, ':lo': lo, ':hi': hi },
+    Limit: limit,
   });
 }
 
@@ -259,25 +257,18 @@ export async function listEvents(
   limit = 200,
 ): Promise<{ events: EventView[]; seq: number }> {
   const card = await loadCard(deps, id);
-  const events = await queryAll<EventItem>(deps, {
-    KeyConditionExpression: '#pk = :pk AND #sk BETWEEN :lo AND :hi',
-    ExpressionAttributeNames: { '#pk': 'PK', '#sk': 'SK' },
-    ExpressionAttributeValues: { ':pk': card.PK, ':lo': eventRange(since).lo, ':hi': eventRange(since).hi },
-    Limit: limit,
-  });
-  return { events: events.map(toEventView), seq: card.seq };
+  return { events: (await eventsAfter(deps, card, since, limit)).map(toEventView), seq: card.seq };
 }
 
-/** Human events after `since`, for the claim response. */
+/** Human events after the card's acknowledged sequence, for the claim response. */
 export async function pendingHumanEvents(deps: Deps, card: CardItem): Promise<EventView[]> {
-  const all = await listEvents(deps, card.id, card.ackedSeq, 500);
-  return all.events.filter((e) => isSteering(e.actor, e.type));
+  const events = (await eventsAfter(deps, card, card.ackedSeq, 500)).map(toEventView);
+  return events.filter((e) => isSteering(e.actor, e.type));
 }
 
-type MoveTarget = { to: Column; pos: string };
-
-export async function resolveTarget(deps: Deps, card: CardItem, to: Column, pos: unknown): Promise<MoveTarget> {
+/** The position a move asked for, or the end of the target column. */
+export async function resolvePos(deps: Deps, projectId: string, column: Column, pos: unknown): Promise<string> {
   if (pos !== undefined && !isPos(pos))
     throw badRequest('pos must be a lower-case alphanumeric position string, as the board sends it.');
-  return { to, pos: pos ?? (await appendPos(deps, card.projectId, to)) };
+  return pos ?? (await appendPos(deps, projectId, column));
 }

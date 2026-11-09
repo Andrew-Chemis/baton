@@ -4,14 +4,25 @@ import {
   RELEASE_REASONS,
   isBackward,
   isForward,
+  isReview,
   type CardView,
   type ClaimResponse,
   type Column,
   type Warning,
 } from './api-types.ts';
-import { appendEvents, claimView, endedClaim, toCardView, type CardFields } from './card-model.ts';
+import {
+  claimView,
+  endedClaim,
+  hasUnacked,
+  isLive,
+  renewLease,
+  toCardView,
+  withEvents,
+  type EventSpec,
+} from './card-model.ts';
 import { cardOp, type CardPlan } from './card-op.ts';
-import { appendPos, columnOf, pendingHumanEvents, resolveTarget } from './cards.ts';
+import { appendPos, columnOf, pendingHumanEvents, resolvePos } from './cards.ts';
+import { timingOf } from './config.ts';
 import type { Reply, RequestCtx } from './engine.ts';
 import { ApiError, badRequest, claimHeld, notHolder } from './errors.ts';
 import type { CardItem, ClaimItem } from './items.ts';
@@ -21,21 +32,47 @@ import { asObject, normalizeRepo, requiredText, text } from './validate.ts';
 
 const holderOf = (agentId: string, worktree: string) => `${agentId}#${worktree}`;
 
-const ACTIVE_OR_MINE: Condition = {
+/** The write may go ahead when nobody holds the card, the holder's lease has run out, or `me` holds it. */
+const activeOrMine = (now: number, me: string): Condition => ({
   expr: 'attribute_not_exists(#claim) OR #claim.#leaseUntil < :now OR #claim.#holder = :me',
   names: { '#claim': 'claim', '#leaseUntil': 'leaseUntil', '#holder': 'holder' },
-};
+  values: { ':now': now, ':me': me },
+});
 
-const HOLDER_IS_ME: Condition = {
+const holderIs = (me: string): Condition => ({
   expr: '#claim.#holder = :me',
   names: { '#claim': 'claim', '#holder': 'holder' },
-};
+  values: { ':me': me },
+});
+
+const ackedAndHolder = (me: string): Condition => ({
+  expr: '#claim.#holder = :me AND #acked >= #human',
+  names: { '#claim': 'claim', '#holder': 'holder', '#acked': 'ackedSeq', '#human': 'lastHumanSeq' },
+  values: { ':me': me },
+});
+
+/** The claim, when `me` holds it; otherwise the refusal that says what `doing` would have needed. */
+function heldBy(card: CardItem, now: number, me: string, doing: string): ClaimItem {
+  if (!card.claim || card.claim.holder !== me) throw notHolder(toCardView(card, now, false), doing);
+  return card.claim;
+}
+
+/** Refuses with claim_held while another holder's lease is still running. */
+function assertNotHeldByOther(card: CardItem, now: number, me: string): void {
+  const claim = card.claim;
+  if (claim && claim.holder !== me && isLive(claim, now))
+    throw claimHeld(toCardView(card, now, true), claimView(claim, now));
+}
+
+/** A plan that writes only the claim's lease: no event, no sequence bump, no project touch. */
+function refreshLease(card: CardItem, claim: ClaimItem, respond: (card: CardView) => unknown): CardPlan {
+  return { next: { ...card, claim }, checkSeq: false, touch: false, condition: holderIs(claim.holder), respond };
+}
 
 function agentWorktree(
   ctx: RequestCtx,
   body: Record<string, unknown>,
 ): { agentId: string; worktree: string; me: string } {
-  if (ctx.actor.kind !== 'agent') throw badRequest('This route is for agents.');
   const worktree = typeof body.worktree === 'string' ? body.worktree.trim() : '';
   if (!worktree) {
     throw new ApiError(
@@ -79,7 +116,7 @@ interface ClaimArgs {
 }
 
 async function planClaim(deps: Deps, card: CardItem, now: number, a: ClaimArgs): Promise<CardPlan> {
-  const { leaseMs, heartbeatSeconds } = deps.config;
+  const { leaseMs } = deps.config;
   if (card.repo !== a.repo) {
     throw new ApiError(
       409,
@@ -93,29 +130,21 @@ async function planClaim(deps: Deps, card: CardItem, now: number, a: ClaimArgs):
     );
   }
   const existing = card.claim;
-  const lease = { heartbeatAt: now, leaseUntil: now + leaseMs };
-  const timing = { leaseSeconds: Math.round(leaseMs / 1000), heartbeatSeconds };
+  const timing = timingOf(deps.config);
 
   if (existing && existing.holder === a.me) {
     // Taking a card you hold writes only the lease and where you are now: no second claim, no second event (Requirement 1.4).
-    const claim: ClaimItem = { ...existing, branch: a.branch, session: a.session, ...lease };
-    const next: CardFields = { ...card, claim };
-    return {
-      next,
-      checkSeq: false,
-      touch: false,
-      condition: { ...HOLDER_IS_ME, values: { ':me': a.me } },
-      respond: (view: CardView): ClaimResponse => ({
-        card: view,
-        warnings: [],
-        pending: [],
-        alreadyHeld: true,
-        ...timing,
-      }),
-    };
+    const claim = renewLease(existing, now, leaseMs, { branch: a.branch, session: a.session });
+    return refreshLease(card, claim, (view): ClaimResponse => ({
+      card: view,
+      warnings: [],
+      pending: [],
+      alreadyHeld: true,
+      ...timing,
+    }));
   }
 
-  if (existing && existing.leaseUntil >= now) throw claimHeld(toCardView(card, now, true), claimView(existing, now));
+  assertNotHeldByOther(card, now, a.me);
 
   const claim: ClaimItem = {
     agentId: a.agentId,
@@ -125,9 +154,10 @@ async function planClaim(deps: Deps, card: CardItem, now: number, a: ClaimArgs):
     branch: a.branch,
     session: a.session,
     claimedAt: now,
-    ...lease,
+    heartbeatAt: now,
+    leaseUntil: now + leaseMs,
   };
-  const specs: { type: 'claimed' | 'taken_over' | 'moved'; payload: Record<string, unknown> }[] = [
+  const specs: EventSpec[] = [
     existing
       ? {
           type: 'taken_over',
@@ -145,35 +175,27 @@ async function planClaim(deps: Deps, card: CardItem, now: number, a: ClaimArgs):
         }
       : { type: 'claimed', payload: { worktree: a.worktree, branch: a.branch, session: a.session } },
   ];
-  let column: Column = card.column;
-  let pos = card.pos;
-  if (a.advanceTo && isForward(card.column, a.advanceTo)) {
-    column = a.advanceTo;
-    pos = await appendPos(deps, card.projectId, column);
-    specs.push({ type: 'moved', payload: { from: card.column, to: column } });
-  }
-  const { events, seq, lastHumanSeq } = appendEvents(card, { kind: 'agent', id: a.agentId }, now, specs);
-  const next: CardFields = {
-    ...card,
-    column,
+  const advanceTo = a.advanceTo && isForward(card.column, a.advanceTo) ? a.advanceTo : undefined;
+  if (advanceTo) specs.push({ type: 'moved', payload: { from: card.column, to: advanceTo } });
+  const [pos, warnings, pending] = await Promise.all([
+    advanceTo ? appendPos(deps, card.projectId, advanceTo) : card.pos,
+    branchWarnings(deps, card, a, now),
+    pendingHumanEvents(deps, card),
+  ]);
+  const { next, events } = withEvents(card, { kind: 'agent', id: a.agentId }, now, specs, {
+    column: advanceTo ?? card.column,
     pos,
     claim,
     lastAgentId: a.agentId,
     lastClaim: existing ? endedClaim(existing, now, 'taken_over', null) : card.lastClaim,
     // A claim that grants ownership clears `reopened` (Requirement 4.2).
     reopened: false,
-    seq,
-    lastHumanSeq,
-    updatedAt: now,
-  };
-  const warnings = await branchWarnings(deps, card, a, now);
-  const pending = await pendingHumanEvents(deps, card);
+  });
   return {
     next,
     events,
-    condition: { ...ACTIVE_OR_MINE, values: { ':now': now, ':me': a.me } },
-    status: 200,
-    respond: (view: CardView): ClaimResponse => ({ card: view, warnings, pending, alreadyHeld: false, ...timing }),
+    condition: activeOrMine(now, a.me),
+    respond: (view): ClaimResponse => ({ card: view, warnings, pending, alreadyHeld: false, ...timing }),
   };
 }
 
@@ -186,9 +208,7 @@ async function branchWarnings(deps: Deps, card: CardItem, a: ClaimArgs, now: num
     ExpressionAttributeValues: { ':pk': repoPartition(card.repo) },
   });
   return others
-    .filter(
-      (o) => o.id !== card.id && !o.archived && o.claim && o.claim.branch === a.branch && o.claim.leaseUntil >= now,
-    )
+    .filter((o) => o.id !== card.id && !o.archived && o.claim && o.claim.branch === a.branch && isLive(o.claim, now))
     .map((o) => ({
       code: 'branch_reused' as const,
       message: `Branch ${a.branch} already carries an active claim on card ${o.key ?? o.id} ("${o.title}"). Two cards on one branch tangle their commits; use a branch per card unless that is intended.`,
@@ -199,25 +219,12 @@ async function branchWarnings(deps: Deps, card: CardItem, a: ClaimArgs, now: num
 export function heartbeatCard(deps: Deps, ctx: RequestCtx, id: string, input: unknown): Promise<Reply> {
   const { me } = agentWorktree(ctx, asObject(input));
   return cardOp(deps, ctx, id, (card, now) => {
-    const view = toCardView(card, now, false);
-    if (!card.claim || card.claim.holder !== me) throw notHolder(view, 'send a heartbeat');
-    const { leaseMs, heartbeatSeconds } = deps.config;
-    const claim: ClaimItem = { ...card.claim, heartbeatAt: now, leaseUntil: now + leaseMs };
-    return {
-      next: { ...card, claim },
-      checkSeq: false,
-      touch: false,
-      condition: { ...HOLDER_IS_ME, values: { ':me': me } },
-      respond: (updated) => {
-        const { body: _body, ...lean } = updated;
-        return { card: lean, leaseSeconds: Math.round(leaseMs / 1000), heartbeatSeconds };
-      },
-    };
+    const claim = renewLease(heldBy(card, now, me, 'send a heartbeat'), now, deps.config.leaseMs);
+    return refreshLease(card, claim, ({ body: _body, ...lean }) => ({ card: lean, ...timingOf(deps.config) }));
   });
 }
 
 export async function ackCard(deps: Deps, ctx: RequestCtx, id: string, input: unknown): Promise<Reply> {
-  if (ctx.actor.kind !== 'agent') throw badRequest('This route is for agents.');
   const agentId = ctx.actor.id;
   const seq = asObject(input).seq;
   if (typeof seq !== 'number' || !Number.isInteger(seq) || seq < 0)
@@ -242,7 +249,7 @@ export async function ackCard(deps: Deps, ctx: RequestCtx, id: string, input: un
         { card: view, seq: card.seq },
       );
     }
-    if (seq <= card.ackedSeq) return { next: card, noop: true, respond: (v) => ({ card: v }) };
+    if (seq <= card.ackedSeq) return { next: card, noop: true };
     return {
       next: { ...card, ackedSeq: seq, updatedAt: now },
       checkSeq: false,
@@ -252,7 +259,6 @@ export async function ackCard(deps: Deps, ctx: RequestCtx, id: string, input: un
         names: { '#last': 'lastAgentId', '#seq': 'seq', '#acked': 'ackedSeq' },
         values: { ':me': agentId, ':n': seq },
       },
-      respond: (v) => ({ card: v }),
     };
   });
 }
@@ -267,11 +273,11 @@ function unacked(card: CardItem, now: number, to: string): ApiError {
   );
 }
 
-const ACKED_AND_HOLDER = (me: string): Condition => ({
-  expr: '#claim.#holder = :me AND #acked >= #human',
-  names: { '#claim': 'claim', '#holder': 'holder', '#acked': 'ackedSeq', '#human': 'lastHumanSeq' },
-  values: { ':me': me },
-});
+/** Review and Done say the work is finished, so everything a human wrote must have been read first. */
+function reviewGuard(card: CardItem, now: number, me: string, to: string): Condition {
+  if (hasUnacked(card)) throw unacked(card, now, to);
+  return ackedAndHolder(me);
+}
 
 export function releaseCard(deps: Deps, ctx: RequestCtx, id: string, input: unknown): Promise<Reply> {
   const body = asObject(input);
@@ -283,30 +289,18 @@ export function releaseCard(deps: Deps, ctx: RequestCtx, id: string, input: unkn
   const to = body.to === undefined ? undefined : columnOf(body.to, 'to');
   const comment = text(body.comment, 'comment', { max: 10_000, optional: true });
   return cardOp(deps, ctx, id, async (card, now) => {
-    const view = toCardView(card, now, false);
-    const claim = card.claim;
-    if (!claim || claim.holder !== me) throw notHolder(view, 'release it');
-    const toReview = to === 'in_review' || to === 'done';
-    if (toReview && card.ackedSeq < card.lastHumanSeq) throw unacked(card, now, to);
-    const specs: { type: 'commented' | 'released'; payload: Record<string, unknown> }[] = [];
+    const claim = heldBy(card, now, me, 'release it');
+    const condition = isReview(to) ? reviewGuard(card, now, me, to) : holderIs(me);
+    const specs: EventSpec[] = [];
     if (comment?.trim()) specs.push({ type: 'commented', payload: { text: comment.trim() } });
     specs.push({ type: 'released', payload: { reason, ...(to ? { to } : {}) } });
-    const { events, seq, lastHumanSeq } = appendEvents(card, { kind: 'agent', id: agentId }, now, specs);
-    const target = to ? await resolveTarget(deps, card, to, body.pos) : undefined;
-    return {
-      next: {
-        ...card,
-        claim: undefined,
-        lastClaim: endedClaim(claim, now, 'released', reason),
-        ...(target ? { column: target.to, pos: target.pos } : {}),
-        seq,
-        lastHumanSeq,
-        updatedAt: now,
-      },
-      events,
-      condition: toReview ? ACKED_AND_HOLDER(me) : { ...HOLDER_IS_ME, values: { ':me': me } },
-      respond: (updated) => ({ card: updated }),
-    };
+    const moved = to ? { column: to, pos: await resolvePos(deps, card.projectId, to, body.pos) } : {};
+    const { next, events } = withEvents(card, { kind: 'agent', id: agentId }, now, specs, {
+      claim: undefined,
+      lastClaim: endedClaim(claim, now, 'released', reason),
+      ...moved,
+    });
+    return { next, events, condition };
   });
 }
 
@@ -315,61 +309,37 @@ export function moveCard(deps: Deps, ctx: RequestCtx, id: string, input: unknown
   const to = columnOf(body.to, 'to');
   const agent = ctx.actor.kind === 'agent' ? agentWorktree(ctx, body) : undefined;
   return cardOp(deps, ctx, id, async (card, now) => {
-    const target = await resolveTarget(deps, card, to, body.pos);
-    const from = card.column;
-    const specs: { type: 'moved' | 'released'; payload: Record<string, unknown> }[] = [
-      { type: 'moved', payload: { from, to } },
-    ];
+    const pos = await resolvePos(deps, card.projectId, to, body.pos);
+    const specs: EventSpec[] = [{ type: 'moved', payload: { from: card.column, to } }];
     let claim = card.claim;
-    let ended: CardFields['lastClaim'] = card.lastClaim;
+    let lastClaim = card.lastClaim;
     let condition: Condition | undefined;
     let reopened = card.reopened;
 
     if (!agent) {
       // A human move. Backward means the work is not done; Done releases whatever claim is there.
-      if (isBackward(from, to)) reopened = true;
+      if (isBackward(card.column, to)) reopened = true;
       if (to === 'done') {
         reopened = false;
         if (claim) {
           specs.push({ type: 'released', payload: { reason: 'human_done' } });
-          ended = endedClaim(claim, now, 'human_done', 'human_done');
+          lastClaim = endedClaim(claim, now, 'human_done', 'human_done');
           claim = undefined;
         }
+      }
+    } else if (isReview(to)) {
+      const held = heldBy(card, now, agent.me, `move it to ${to}`);
+      condition = reviewGuard(card, now, agent.me, to);
+      if (to === 'done') {
+        specs.push({ type: 'released', payload: { reason: 'done' } });
+        lastClaim = endedClaim(held, now, 'released', 'done');
+        claim = undefined;
       }
     } else {
-      const view = toCardView(card, now, false);
-      const toReview = to === 'in_review' || to === 'done';
-      if (toReview) {
-        if (!card.claim || card.claim.holder !== agent.me) throw notHolder(view, `move it to ${to}`);
-        if (card.ackedSeq < card.lastHumanSeq) throw unacked(card, now, to);
-        condition = ACKED_AND_HOLDER(agent.me);
-        if (to === 'done') {
-          specs.push({ type: 'released', payload: { reason: 'done' } });
-          ended = endedClaim(card.claim, now, 'released', 'done');
-          claim = undefined;
-        }
-      } else if (card.claim && card.claim.leaseUntil >= now && card.claim.holder !== agent.me) {
-        throw claimHeld(toCardView(card, now, true), claimView(card.claim, now));
-      } else {
-        condition = { ...ACTIVE_OR_MINE, values: { ':now': now, ':me': agent.me } };
-      }
+      assertNotHeldByOther(card, now, agent.me);
+      condition = activeOrMine(now, agent.me);
     }
-    const { events, seq, lastHumanSeq } = appendEvents(card, ctx.actor, now, specs);
-    return {
-      next: {
-        ...card,
-        column: target.to,
-        pos: target.pos,
-        reopened,
-        claim,
-        lastClaim: ended,
-        seq,
-        lastHumanSeq,
-        updatedAt: now,
-      },
-      events,
-      condition,
-      respond: (view) => ({ card: view }),
-    };
+    const { next, events } = withEvents(card, ctx.actor, now, specs, { column: to, pos, reopened, claim, lastClaim });
+    return { next, events, condition };
   });
 }

@@ -5,9 +5,28 @@ import type { CardItem, ClaimItem, EventItem, LastClaimItem } from './items.ts';
 
 export type CardFields = Omit<CardItem, 'PK' | 'SK' | 'GSI1PK' | 'GSI1SK' | 'GSI2PK' | 'GSI2SK' | 'GSI3PK' | 'GSI3SK'>;
 
+/** The claim's lease has not run out. */
+export const isLive = (claim: ClaimItem, now: number): boolean => claim.leaseUntil >= now;
+
+/** A human has written to the card since its last agent acknowledged. */
+export const hasUnacked = (card: CardFields): boolean => card.ackedSeq < card.lastHumanSeq;
+
+/** The claim with its lease running from `now`, and `patch` applied for a holder that took the card again. */
+export const renewLease = (
+  claim: ClaimItem,
+  now: number,
+  leaseMs: number,
+  patch: Partial<ClaimItem> = {},
+): ClaimItem => ({
+  ...claim,
+  ...patch,
+  heartbeatAt: now,
+  leaseUntil: now + leaseMs,
+});
+
 /** The card needs its last agent's attention: reopened, or a human event it has not acknowledged. */
 const needsAttention = (card: CardFields): boolean =>
-  card.lastAgentId !== undefined && !card.archived && (card.reopened || card.lastHumanSeq > card.ackedSeq);
+  card.lastAgentId !== undefined && !card.archived && (card.reopened || hasUnacked(card));
 
 /** Attaches every key attribute, derived from the logical fields so a move or an ack can never leave an index stale. */
 export function keyed(card: CardFields): CardItem {
@@ -26,12 +45,11 @@ export function keyed(card: CardFields): CardItem {
 }
 
 export function stateOf(card: CardFields, now: number): CardState {
-  if (card.claim) return card.claim.leaseUntil < now ? 'stale' : 'claimed';
+  if (card.claim) return isLive(card.claim, now) ? 'claimed' : 'stale';
   return card.column === 'in_progress' ? 'unowned' : 'unclaimed';
 }
 
-export const isUnread = (card: CardFields): boolean =>
-  card.lastAgentId !== undefined && card.lastHumanSeq > card.ackedSeq;
+export const isUnread = (card: CardFields): boolean => card.lastAgentId !== undefined && hasUnacked(card);
 
 /** Where a claim was left when it ended, kept on the card for the next agent. */
 export const endedClaim = (
@@ -60,7 +78,7 @@ export function claimView(claim: ClaimItem, now: number): ClaimView {
     claimedAt: claim.claimedAt,
     heartbeatAt: claim.heartbeatAt,
     leaseUntil: claim.leaseUntil,
-    stale: claim.leaseUntil < now,
+    stale: !isLive(claim, now),
   };
 }
 
@@ -106,7 +124,7 @@ export interface EventSpec {
 }
 
 /** The events to append to `card` and the counters they move. Heartbeats never come through here. */
-export function appendEvents(card: CardFields, actor: Actor, now: number, specs: EventSpec[]) {
+function appendEvents(card: CardFields, actor: Actor, now: number, specs: EventSpec[]) {
   let seq = card.seq;
   let lastHumanSeq = card.lastHumanSeq;
   const events: EventItem[] = specs.map((spec) => {
@@ -124,4 +142,16 @@ export function appendEvents(card: CardFields, actor: Actor, now: number, specs:
     };
   });
   return { events, seq, lastHumanSeq };
+}
+
+/** `card` with `patch` applied and `specs` appended as events: sequence, human sequence and `updatedAt` follow from them. */
+export function withEvents(
+  card: CardFields,
+  actor: Actor,
+  now: number,
+  specs: EventSpec[],
+  patch: Partial<CardFields> = {},
+): { next: CardFields; events: EventItem[] } {
+  const { events, seq, lastHumanSeq } = appendEvents(card, actor, now, specs);
+  return { next: { ...card, ...patch, seq, lastHumanSeq, updatedAt: now }, events };
 }

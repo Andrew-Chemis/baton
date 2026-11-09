@@ -6,6 +6,10 @@ export type Column = (typeof COLUMNS)[number];
 /** The board's flow, left to right. `blocked` sits outside it: it never counts as backward or forward. */
 const FLOW: readonly Column[] = COLUMNS.filter((column) => column !== 'blocked');
 
+/** Review and Done are where an agent says the work is finished. */
+export const isReview = (column: Column | undefined): column is 'in_review' | 'done' =>
+  column === 'in_review' || column === 'done';
+
 /** `to` is further along the flow than `from`. */
 export const isForward = (from: Column, to: Column): boolean => {
   const a = FLOW.indexOf(from);

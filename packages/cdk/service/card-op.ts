@@ -34,7 +34,8 @@ export interface CardPlan {
   checkSeq?: boolean;
   touch?: boolean;
   status?: number;
-  respond: (card: CardView) => unknown;
+  /** The response body for the card as it will be. Default `{ card }`. */
+  respond?: (card: CardView) => unknown;
   /** Nothing to write: answer from the snapshot. */
   noop?: boolean;
   classify?: (cancelled: Cancelled) => ApiError | 'retry' | undefined;
@@ -51,7 +52,8 @@ export function cardOp(
     const card = await loadCard(deps, cardId);
     const plan = await build(card, now);
     const next = keyed(plan.next);
-    const reply: Reply = { status: plan.status ?? 200, body: plan.respond(toCardView(next, now, true)) };
+    const view = toCardView(next, now, true);
+    const reply: Reply = { status: plan.status ?? 200, body: plan.respond ? plan.respond(view) : { card: view } };
     if (plan.noop) return { items: [], reply };
     const seqGuard: Condition | undefined =
       plan.checkSeq === false
