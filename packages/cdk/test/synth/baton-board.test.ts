@@ -48,7 +48,7 @@ describe('synthesis', () => {
 
   test('one Lambda asset serves the API and the token authorizer', () => {
     const ours = Object.values(template.findResources('AWS::Lambda::Function')).filter(
-      (r: any) => r.Properties.Handler === 'index.handler' && r.Properties.Runtime === 'nodejs22.x',
+      (r: any) => r.Properties.Handler === 'index.handler' && r.Properties.Runtime === 'nodejs24.x',
     );
     expect(ours).toHaveLength(1);
     const authorizers = template.findResources('AWS::ApiGatewayV2::Authorizer');

@@ -17,7 +17,7 @@ async function buildApi() {
     outfile,
     bundle: true,
     platform: 'node',
-    target: 'node22',
+    target: 'node24',
     // CommonJS: the Lambda runtime loads `index.handler` without needing a package.json next to the file.
     format: 'cjs',
     legalComments: 'none',

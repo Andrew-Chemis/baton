@@ -300,7 +300,9 @@ it; "docs" means a documentation page read while building, not a deployment.
    not observed.
 3. **Toolchain.** Node 22 or later for the packages (`engines`), 22.18 or
    later for the repository (native TypeScript execution and
-   `import.meta.main`). No projen: the workspace is plain pnpm 10.28.0
+   `import.meta.main`). The API Lambda runs on `nodejs24.x`
+   (`Runtime.NODEJS_24_X`, in `aws-cdk-lib` before 2.270.0) and its bundle is
+   built for `node24`. No projen: the workspace is plain pnpm 10.28.0
    with TypeScript 7.0.2, oxlint, oxfmt, vitest 5. `aws-cdk-lib` ^2.270.0 and
    `constructs` ^10.5.0 are peers; 2.270.0 is the first release with
    `aws-cdk-lib/aws-pricingplanmanager`, which the flat-rate plan needs. Ran:
