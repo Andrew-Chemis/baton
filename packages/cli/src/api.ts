@@ -1,6 +1,7 @@
 // The HTTP client. Every write carries an Idempotency-Key that stays the same across retries, so a request whose answer was
 // lost on the way back is answered from the board's record instead of being done twice.
 import { randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 import { CliError } from './git.ts';
 
 export interface BoardRefusal {
@@ -56,7 +57,7 @@ export class Api {
   ): Promise<Reply<T>> {
     const { url, token } = this.#options;
     const doFetch = this.#options.fetch ?? fetch;
-    const sleep = this.#options.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+    const sleep = this.#options.sleep ?? ((ms: number) => delay(ms));
     const backoff = this.#options.backoffMs ?? [400, 1200, 3500];
     const target = new URL(`${url}${AGENT_ROOT}${path}`);
     for (const [k, v] of Object.entries(query)) if (v !== undefined) target.searchParams.set(k, v);
