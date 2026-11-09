@@ -1,43 +1,11 @@
 // A board for one test file: a real table in DynamoDB Local (or whatever DYNAMODB_ENDPOINT names), a clock the test moves,
 // and callers that go through the same router the Lambda uses.
-import {
-  CreateTableCommand,
-  DescribeTableCommand,
-  DynamoDBClient,
-  UpdateTimeToLiveCommand,
-  type CreateTableCommandInput,
-} from '@aws-sdk/client-dynamodb';
 import { randomBytes } from 'node:crypto';
 import { inject } from 'vitest';
-import { AGENT_PREFIX, GSI1, GSI2, GSI3, HUMAN_PREFIX, TABLE_KEYS, TTL_ATTRIBUTE } from '../../src/schema.ts';
+import { AGENT_PREFIX, HUMAN_PREFIX } from '../../src/schema.ts';
 import { authorize, handleHttp, type HttpEvent } from '../../service/router.ts';
 import { createDocClient, type Deps } from '../../service/store.ts';
-
-export function createTableInput(table: string): CreateTableCommandInput {
-  const gsi = (g: { name: string; pk: string; sk: string }) => ({
-    IndexName: g.name,
-    KeySchema: [
-      { AttributeName: g.pk, KeyType: 'HASH' as const },
-      { AttributeName: g.sk, KeyType: 'RANGE' as const },
-    ],
-    Projection: { ProjectionType: 'ALL' as const },
-  });
-  return {
-    TableName: table,
-    BillingMode: 'PAY_PER_REQUEST',
-    AttributeDefinitions: [TABLE_KEYS.pk, TABLE_KEYS.sk, GSI1.pk, GSI1.sk, GSI2.pk, GSI2.sk, GSI3.pk, GSI3.sk].map(
-      (n) => ({
-        AttributeName: n,
-        AttributeType: 'S' as const,
-      }),
-    ),
-    KeySchema: [
-      { AttributeName: TABLE_KEYS.pk, KeyType: 'HASH' },
-      { AttributeName: TABLE_KEYS.sk, KeyType: 'RANGE' },
-    ],
-    GlobalSecondaryIndexes: [gsi(GSI1), gsi(GSI2), gsi(GSI3)],
-  };
-}
+import { createTable } from './table.ts';
 
 export const T0 = Date.parse('2026-01-01T00:00:00Z');
 export const MINUTE = 60_000;
@@ -84,19 +52,7 @@ export async function newBoard(options: { leaseMs?: number; heartbeatSeconds?: n
   const credentials = { accessKeyId: 'local', secretAccessKey: 'local' };
   const region = 'us-west-2';
   const table = `baton-test-${randomBytes(6).toString('hex')}`;
-  const raw = new DynamoDBClient({ endpoint, region, credentials });
-  await raw.send(new CreateTableCommand(createTableInput(table)));
-  for (;;) {
-    const described = await raw.send(new DescribeTableCommand({ TableName: table }));
-    if (described.Table?.TableStatus === 'ACTIVE') break;
-    await new Promise((r) => setTimeout(r, 50));
-  }
-  await raw.send(
-    new UpdateTimeToLiveCommand({
-      TableName: table,
-      TimeToLiveSpecification: { AttributeName: TTL_ATTRIBUTE, Enabled: true },
-    }),
-  );
+  await createTable({ endpoint, region, credentials }, table);
   const clock = makeClock();
   const deps: Deps = {
     db: createDocClient({ endpoint, region, credentials }),
