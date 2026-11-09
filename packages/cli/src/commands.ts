@@ -4,7 +4,7 @@ import { Api } from './api.ts';
 import { flag, flagAll, has, type Parsed, UsageError } from './args.ts';
 import { resolveConfig } from './credentials.ts';
 import { CliError, detectCheckout, stateFile, type Checkout } from './git.ts';
-import { freshState, readState, removeState, writeState, type WorktreeState } from './state.ts';
+import { freshState, lastBeat, readState, removeState, stampBeat, writeState, type WorktreeState } from './state.ts';
 
 export interface Io {
   cwd: string;
@@ -205,9 +205,9 @@ export async function take(ctx: Context) {
       repo: checkout.repo,
       branch: checkout.branch,
       takenAt: now,
-      heartbeatAt: now,
     },
   });
+  await stampBeat(path, now);
   if (previous && previous.card !== body.card.id) {
     body.warnings.push({
       code: 'second_card',
@@ -222,8 +222,7 @@ export async function heartbeat(ctx: Context) {
   const checkout = await ctx.checkout();
   const { body } = await (await ctx.api()).post(`/cards/${card.id}/heartbeat`, { worktree: checkout.worktree });
   const { path, state } = await ctx.state();
-  if (state.held?.card === card.id)
-    await writeState(path, { ...state, held: { ...state.held, heartbeatAt: ctx.now() } });
+  if (state.held?.card === card.id) await stampBeat(path, ctx.now());
   return body;
 }
 
@@ -340,9 +339,10 @@ export async function hook(ctx: Context): Promise<unknown> {
     if (!state || !held) return undefined;
     if (which === 'heartbeat') {
       const now = ctx.now();
-      if (now - held.heartbeatAt < HEARTBEAT_MIN_INTERVAL_MS) return undefined;
+      const last = await lastBeat(located.statePath);
+      if (last !== undefined && now - last < HEARTBEAT_MIN_INTERVAL_MS) return undefined;
       // Claim the minute before sending, so parallel tool calls in one burst send one heartbeat.
-      await writeState(located.statePath, { ...state, held: { ...held, heartbeatAt: now } });
+      await stampBeat(located.statePath, now);
       try {
         const { body } = await (await ctx.api()).post(`/cards/${held.card}/heartbeat`, { worktree: located.worktree });
         return body;

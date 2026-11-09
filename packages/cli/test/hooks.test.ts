@@ -1,7 +1,7 @@
 // Requirement 8.4: a heartbeat hook that sends at most one heartbeat a minute, and a stop hook that releases the card with
 // reason session_ended and a comment. Hooks must never disturb the session: they exit 0 whatever happens.
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { REPO, startWorld, type World } from './harness.ts';
 
@@ -78,6 +78,21 @@ describe('heartbeat hook', () => {
     expect(net.paths).toHaveLength(2);
   });
 
+  test('check and ack rewrite the state file but not the stamp, so they never hold a heartbeat back', async () => {
+    const { dir, card } = await holding('hb-check');
+    const stamp = `${statePath(dir)}.beat`;
+    const stamped = statSync(stamp).mtimeMs;
+    expect((await w.baton(['check', card.id], { cwd: dir })).code).toBe(0);
+    expect((await w.baton(['ack', card.id], { cwd: dir })).code).toBe(0);
+    // The state file now records what check showed; the stamp is exactly where the claim left it.
+    expect(JSON.parse(readFileSync(statePath(dir), 'utf8')).checked[card.id]).toBeGreaterThan(0);
+    expect(statSync(stamp).mtimeMs).toBe(stamped);
+    const net = counting();
+    await w.baton(['hook', 'heartbeat'], { cwd: dir, fetch: net.fetch, now: () => stamped + 61_000 });
+    expect(net.paths).toEqual([`POST /api/agent/cards/${card.id}/heartbeat`]);
+    expect(statSync(stamp).mtimeMs).toBeGreaterThanOrEqual(stamped + 61_000 - 1);
+  });
+
   test('extends the lease on the board', async () => {
     const { dir, card } = await holding('hb-extends');
     const before = (await human().get(`/cards/${card.id}`)).body.card.claim.leaseUntil;
@@ -105,7 +120,7 @@ describe('heartbeat hook', () => {
     const result = await w.baton(['hook', 'heartbeat'], { cwd: dir, now: () => Date.now() + 61_000 });
     expect(result.code).toBe(0);
     expect(result.stderr).toMatch(/not holding|holder|hold/i);
-    const state = JSON.parse((await import('node:fs')).readFileSync(statePath(dir), 'utf8'));
+    const state = JSON.parse(readFileSync(statePath(dir), 'utf8'));
     expect(state.held).toBeNull();
   });
 });

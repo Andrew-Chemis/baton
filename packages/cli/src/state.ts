@@ -2,7 +2,7 @@
 // the sequence each `check` showed, so `ack` acknowledges what was read and not what arrived since. One JSON file in the
 // worktree's own git directory, so a linked worktree has its own and nothing is committed.
 import { randomBytes } from 'node:crypto';
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 export interface HeldCard {
@@ -11,8 +11,6 @@ export interface HeldCard {
   repo: string;
   branch: string;
   takenAt: number;
-  /** When the last heartbeat was sent, for the once-a-minute limit. */
-  heartbeatAt: number;
 }
 
 export interface WorktreeState {
@@ -51,6 +49,31 @@ export async function writeState(path: string, state: WorktreeState): Promise<vo
   await rename(temp, path);
 }
 
+/**
+ * The once-a-minute limit has a stamp of its own beside the state file: an empty file whose modification time is when this
+ * worktree last extended its lease (a claim, a `heartbeat`, the heartbeat hook). Commands that only read or acknowledge
+ * (`check`, `ack`) rewrite the state file and must not move it, or an agent that checks a card often would never heartbeat.
+ * The hook script reads the same file's mtime, so the shell prefilter and this code cannot disagree.
+ */
+export const beatPath = (statePath: string): string => `${statePath}.beat`;
+
+/** When the lease was last extended from this worktree, in ms; undefined if never. */
+export async function lastBeat(statePath: string): Promise<number | undefined> {
+  try {
+    return (await stat(beatPath(statePath))).mtimeMs;
+  } catch {
+    return undefined;
+  }
+}
+
+export async function stampBeat(statePath: string, ms: number): Promise<void> {
+  const path = beatPath(statePath);
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, '');
+  await utimes(path, ms / 1000, ms / 1000);
+}
+
 export async function removeState(path: string): Promise<void> {
   await rm(path, { force: true });
+  await rm(beatPath(path), { force: true });
 }

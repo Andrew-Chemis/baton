@@ -8,6 +8,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
   statSync,
   utimesSync,
   writeFileSync,
@@ -122,13 +123,28 @@ describe('hook scripts', () => {
     expect(calls()).toEqual([]);
   });
 
-  test('heartbeat: a state file written in the last minute is left alone; an older one gets the CLI', () => {
+  test('heartbeat: a stamp touched in the last minute is left alone; an older or missing one gets the CLI', () => {
     const { state, run, calls } = setup();
     writeFileSync(state, '{}');
+    writeFileSync(`${state}.beat`, '');
     run(heartbeat);
     expect(calls()).toEqual([]);
     const old = new Date(Date.now() - 120_000);
-    utimesSync(state, old, old);
+    utimesSync(`${state}.beat`, old, old);
+    run(heartbeat);
+    expect(calls()).toEqual([`--yes --prefer-offline @andrewchemis/baton-cli@${version} hook heartbeat`]);
+    rmSync(`${state}.beat`);
+    run(heartbeat);
+    expect(calls()).toHaveLength(2);
+  });
+
+  test('heartbeat: a state file rewritten inside the minute (by check or ack) does not hold the heartbeat back', () => {
+    const { state, run, calls } = setup();
+    const old = new Date(Date.now() - 120_000);
+    writeFileSync(`${state}.beat`, '');
+    utimesSync(`${state}.beat`, old, old);
+    // `baton check` has just rewritten the state file: its mtime is now, the stamp's is two minutes ago.
+    writeFileSync(state, '{}');
     run(heartbeat);
     expect(calls()).toEqual([`--yes --prefer-offline @andrewchemis/baton-cli@${version} hook heartbeat`]);
   });
@@ -152,8 +168,6 @@ describe('hook scripts', () => {
     const { dir, state, repo } = setup();
     writeFileSync(join(dir, 'bin', 'npx'), '#!/bin/sh\nexit 1\n');
     writeFileSync(state, '{}');
-    const old = new Date(Date.now() - 120_000);
-    utimesSync(state, old, old);
     const env = { PATH: `${join(dir, 'bin')}:${process.env.PATH ?? ''}`, HOME: dir };
     expect(() => execFileSync('sh', [heartbeat], { cwd: repo, env, stdio: 'pipe' })).not.toThrow();
     expect(() => execFileSync('sh', [stop], { cwd: repo, env, stdio: 'pipe' })).not.toThrow();
