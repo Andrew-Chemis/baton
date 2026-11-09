@@ -284,7 +284,7 @@ export async function patchProject(deps: Deps, ctx: RequestCtx, id: string, inpu
   });
 }
 
-/** Archives a project that has no active claim, and frees its repos (Requirement 10.5). */
+/** Archives a project that has no claim on any card, and frees its repos (Requirement 10.5). */
 export async function archiveProject(deps: Deps, ctx: RequestCtx, id: string): Promise<Reply> {
   return execute(deps, ctx, async (now) => {
     const project = await loadProject(deps, id);
@@ -292,13 +292,14 @@ export async function archiveProject(deps: Deps, ctx: RequestCtx, id: string): P
       return { items: [], reply: { status: 200, body: { project: await projectView(deps, project, now, true) } } };
     }
     const cards = await boardCards(deps, id);
-    const claimed = cards.filter((c) => !c.archived && stateOf(c, now) === 'claimed');
+    // Any claim blocks, stale or not: a stale holder can still heartbeat its claim back to life without moving `rev`.
+    const claimed = cards.filter((c) => !c.archived && c.claim);
     if (claimed.length > 0) {
       const first = claimed[0] as CardItem;
       throw new ApiError(
         'project_has_claims',
         `Project "${project.name}" has ${claimed.length} claimed card(s), for example ${first.key ?? first.title} held by ${first.claim?.agentId}. ` +
-          'Wait for those agents to pass or drop them, or for their leases to expire, then archive again.',
+          'Wait for those agents to pass or drop them. A card whose agent is gone can be moved to Done or archived here. Then archive the project again.',
         { project: { id: project.id, name: project.name } },
       );
     }

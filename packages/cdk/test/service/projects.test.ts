@@ -130,11 +130,16 @@ describe('R10 registering projects and repos', () => {
     expect((await s.human.post('/projects', { name: 'Widgets', repos: ['acme/widgets'] })).status).toBe(201);
   });
 
-  test('10.5 a stale claim does not block archiving', async () => {
+  test('10.5 a stale claim still blocks archiving, until the claim is released', async () => {
     const s = await seeded();
     const card = await newCard(s.human, { column: 'in_progress' });
-    await s.board.as({ agent: 'a1' }).post(`/cards/${card.id}/claim`, claimBody());
+    const agent = s.board.as({ agent: 'a1' });
+    await agent.post(`/cards/${card.id}/claim`, claimBody());
     s.board.clock.advance(11 * MINUTE);
+    const refused = await s.human.post(`/projects/${s.projectId}/archive`);
+    expect(refused.status).toBe(409);
+    expect(refused.body).toMatchObject({ code: 'project_has_claims', project: { id: s.projectId } });
+    await agent.post(`/cards/${card.id}/release`, { worktree: '/work/widgets', reason: 'paused' });
     expect((await s.human.post(`/projects/${s.projectId}/archive`)).status).toBe(200);
   });
 });
