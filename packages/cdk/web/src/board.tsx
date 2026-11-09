@@ -49,6 +49,9 @@ export function Board(props: { projectId: string; route: Route }) {
     width: number;
     active: boolean;
     cancelled: boolean;
+    /** Where the pointer is over now, kept here as well as in `drag` so a release needs no re-render to know it. */
+    col: Column | null;
+    index: number;
   } | null>(null);
   const suppressClick = useRef(false);
   const scroller = useRef<HTMLDivElement>(null);
@@ -111,6 +114,8 @@ export function Board(props: { projectId: string; route: Route }) {
       width: rect.width,
       active: false,
       cancelled: false,
+      col: null,
+      index: 0,
     };
     event.currentTarget.setPointerCapture(event.pointerId);
   }
@@ -138,6 +143,8 @@ export function Board(props: { projectId: string; route: Route }) {
       if (event.clientX < edge.left + 40) box.scrollBy({ left: -14 });
       else if (event.clientX > edge.right - 40) box.scrollBy({ left: 14 });
     }
+    p.col = col;
+    p.index = index;
     setDrag({ card, x: event.clientX, y: event.clientY, dx: p.dx, dy: p.dy, width: p.width, col, index });
   }
 
@@ -154,22 +161,20 @@ export function Board(props: { projectId: string; route: Route }) {
     // The browser follows a drag's pointerup with a click on the card; that click is not a request to open it.
     suppressClick.current = true;
     setTimeout(() => (suppressClick.current = false), 0);
-    const finished = drag;
     setDrag(null);
-    if (!cancelled && !p.cancelled && finished?.col) void drop(card, finished.col, finished.index);
+    if (!cancelled && !p.cancelled && p.col) void drop(card, p.col, p.index);
   }
 
   useEffect(() => {
-    if (!drag) return undefined;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        if (press.current) press.current.cancelled = true;
+      if (event.key === 'Escape' && press.current?.active) {
+        press.current.cancelled = true;
         setDrag(null);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [drag]);
+  }, []);
 
   const setQuery = (changes: Record<string, string | null>) => {
     const q = new URLSearchParams(route.query);
