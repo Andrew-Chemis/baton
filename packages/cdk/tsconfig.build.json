@@ -4,6 +4,7 @@
     "noEmit": false,
     "allowImportingTsExtensions": false,
     "rewriteRelativeImportExtensions": true,
+    "verbatimModuleSyntax": false,
     "module": "node16",
     "moduleResolution": "node16",
     "target": "es2023",
