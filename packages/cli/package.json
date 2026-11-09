@@ -1,0 +1,43 @@
+{
+  "name": "@andrewchemis/baton-cli",
+  "version": "0.0.0",
+  "description": "The baton command: claim, heartbeat, check and pass cards on a Baton board from any git checkout",
+  "keywords": [
+    "baton",
+    "kanban",
+    "agents",
+    "cli",
+    "claude-code"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Andrew-Chemis/baton.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/Andrew-Chemis/baton#readme",
+  "bugs": "https://github.com/Andrew-Chemis/baton/issues",
+  "author": {
+    "name": "Andrew Chemis"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "baton": "./dist/baton.mjs"
+  },
+  "files": [
+    "dist/baton.mjs"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && node scripts/build.ts"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
+}
