@@ -2,7 +2,7 @@
 
 Status: active
 
-- [ ] 1. Compile acceptance checks <!-- pattern: advisor -->
+- [x] 1. Compile acceptance checks <!-- pattern: advisor -->
   - R1.1-1.5 → claim tests: grant, concurrent race yields one winner, held
     refused with holder returned, re-claim idempotent, expired lease taken over
     with `taken_over` event
@@ -38,15 +38,17 @@ Status: active
     no checkout step and `id-token: write` only; `environment: npm` present
   - Synth test: `manifest.missing` empty; one Lambda asset; no Secrets Manager,
     no KMS key, no provisioned capacity in the template
-- [ ] 2. Research the unverified facts in `design.md` and amend it <!-- pattern: solo -->
-- [ ] 3. Repo scaffold: pnpm workspace, `packages/cdk` and `packages/cli`, oxlint, oxfmt, vitest, `ci.yml`, account-string check <!-- pattern: advisor -->
-- [ ] 4. `BatonBoard` and `BatonDistribution` constructs: table, GSIs, TTL, user pool, HTTP API with both authorizers, Lambda from `assets/api`, SPA from `assets/web` <!-- pattern: advisor -->
-- [ ] 5. Service: project, repo map, card, event and claim modules with the conditional writes and transactions <!-- pattern: advisor -->
-- [ ] 6. Service: auth, idempotency, error codes, listing states, dashboard counts <!-- pattern: advisor -->
-- [ ] 7. Web app: dashboard with register form, per-project board with drag, drawer, comments, repo filter and project settings, agents and tokens page <!-- pattern: advisor -->
-- [ ] 8. CLI package: `bin`, git detection, project resolution, `project register`, token resolution, JSON output <!-- pattern: advisor -->
-- [ ] 9. Build and pack: esbuild the Lambda and Vite the web app into `assets/`, `files` allowlists, pack test <!-- pattern: advisor -->
-- [ ] 10. `changelog.yml` and `release.yml` with staged npm publishing; owner sets up the `npm` environment and trusted publishing <!-- pattern: solo -->
+- [x] 2. Research the unverified facts in `design.md` and amend it <!-- pattern: solo -->
+- [x] 3. Repo scaffold: pnpm workspace, `packages/cdk` and `packages/cli`, oxlint, oxfmt, vitest, `ci.yml`, account-string check <!-- pattern: advisor -->
+- [x] 4. `BatonBoard` and `BatonDistribution` constructs: table, GSIs, TTL, user pool, HTTP API with both authorizers, Lambda from `assets/api`, SPA from `assets/web` <!-- pattern: advisor -->
+- [x] 5. Service: project, repo map, card, event and claim modules with the conditional writes and transactions <!-- pattern: advisor -->
+- [x] 6. Service: auth, idempotency, error codes, listing states, dashboard counts <!-- pattern: advisor -->
+- [x] 7. Web app: dashboard with register form, per-project board with drag, drawer, comments, repo filter and project settings, agents and tokens page <!-- pattern: advisor -->
+- [x] 8. CLI package: `bin`, git detection, project resolution, `project register`, token resolution, JSON output <!-- pattern: advisor -->
+- [x] 9. Build and pack: esbuild the Lambda and Vite the web app into `assets/`, `files` allowlists, pack test <!-- pattern: advisor -->
+- [x] 10. `changelog.yml` and `release.yml` with staged npm publishing; owner sets up the `npm` environment and trusted publishing <!-- pattern: solo -->
+  - The workflows and their lint tests are done. The owner's part (the `npm` environment, trusted publishing, the GitHub App
+    secrets, the first-publish token, the `v0.*` tag) is not done: `docs/release-setup.md` lists the steps.
 - [ ] 11. Skill in `claude-plugins`: `SKILL.md`, heartbeat and stop hooks calling the published CLI through `npx` at a pinned version <!-- pattern: advisor -->
 - [ ] 12. Consumer: `apps/baton` in `andrewchemis.dev` on tributary's layout, config, pipeline, asset-path synth test <!-- pattern: advisor -->
 - [ ] 13. Deploy through the `andrewchemis.dev` pipeline, seed the first agent token, run one real claim from a remote session <!-- pattern: solo -->
