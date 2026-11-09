@@ -4,7 +4,7 @@
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, normalize } from 'node:path';
-import { CONTENT_SECURITY_POLICY } from '../../src/baton-distribution.ts';
+import { CONTENT_SECURITY_POLICY } from '../../src/csp.ts';
 import { AGENT_PREFIX, HUMAN_PREFIX } from '../../src/schema.ts';
 import { authorize, handleHttp, type HttpEvent } from '../../service/router.ts';
 import type { Deps } from '../../service/store.ts';

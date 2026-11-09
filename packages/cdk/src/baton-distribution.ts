@@ -9,7 +9,10 @@ import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
 import { Construct } from 'constructs';
 import { WEB_ASSET_PATH } from './assets.js';
+import { CONTENT_SECURITY_POLICY } from './csp.js';
 import { API_ROOT } from './schema.js';
+
+export { CONTENT_SECURITY_POLICY };
 
 export type FlatRatePlanTier = 'FREE' | 'PRO' | 'BUSINESS' | 'PREMIUM';
 
@@ -54,18 +57,6 @@ export interface BatonDistributionProps {
   /** Path of the built web app. Default: the one inside this package. */
   readonly webAssetPath?: string;
 }
-
-/** Content-Security-Policy of the app: its own origin, and the Cognito hosted UI for the sign-in token exchange. */
-export const CONTENT_SECURITY_POLICY = [
-  "default-src 'self'",
-  "script-src 'self'",
-  "style-src 'self'",
-  "img-src 'self' data:",
-  "connect-src 'self' https://*.amazoncognito.com",
-  "form-action 'self' https://*.amazoncognito.com",
-  "frame-ancestors 'none'",
-  "base-uri 'none'",
-].join('; ');
 
 /**
  * The CloudFront piece: the single-page app from a private S3 bucket (Origin Access Control) on `/*`, the API on `/api/*`,
