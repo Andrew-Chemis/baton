@@ -83,6 +83,15 @@ importers:
 
   packages/cli:
     devDependencies:
+      '@aws-crypto/sha256-js':
+        specifier: ^5.2.0
+        version: 5.2.0
+      '@smithy/protocol-http':
+        specifier: ^5.6.2
+        version: 5.6.2
+      '@smithy/signature-v4':
+        specifier: ^5.7.5
+        version: 5.7.5
       esbuild:
         specifier: ^0.28.2
         version: 0.28.2
@@ -113,6 +122,13 @@ packages:
     bundledDependencies:
       - jsonschema
       - semver
+
+  '@aws-crypto/sha256-js@5.2.0':
+    resolution: {integrity: sha512-FFQQyu7edu4ufvIZ+OadFpHHOt+eSTBaYaki44c+akjg7qZg9oOQeLlk77F6tSYqjDAFClrHJk9tMf0HdVyOvA==}
+    engines: {node: '>=16.0.0'}
+
+  '@aws-crypto/util@5.2.0':
+    resolution: {integrity: sha512-4RkU9EsI6ZpBve5fseQlGNUWKMa1RLPQ1dnjnQoe07ldfIzcsGb5hC5W0Dm7u423KWzawlrpbjXBrXCEv9zazQ==}
 
   '@aws-sdk/client-dynamodb@3.1164.0':
     resolution: {integrity: sha512-jrX0BtmtyRelTW/yAGgFpXvDj8BioL80njIGVfOsMsCrSKi+Ai0QZ45AqWgA0h1r7uzqfpWFhNUQZO77sOoyzg==}
@@ -987,8 +1003,16 @@ packages:
     resolution: {integrity: sha512-h8BdMUrUBhMhMaeK7QqAdINRZezCGuYOCpcOZZ1ewxbHST9rdTd09xwNpvLTYfzDRehxQiReK4SKbdYZxBA+ew==}
     engines: {node: '>=18.0.0'}
 
+  '@smithy/is-array-buffer@2.2.0':
+    resolution: {integrity: sha512-GGP3O9QFD24uGeAXYUjwSTXARoqpZykHadOmA8G5vfJPK0/DC67qa//0qvqrJzL1xc8WQWX7/yc7fwudjPHPhA==}
+    engines: {node: '>=14.0.0'}
+
   '@smithy/node-http-handler@4.14.2':
     resolution: {integrity: sha512-i1uORV1v3qBqP43ayRKzIdm1q5x14tf8N4Dd06/QUX1Szm6VxHMrTsu20X5E63UFsaNZCRjI4SXG0jDmqYa+3w==}
+    engines: {node: '>=18.0.0'}
+
+  '@smithy/protocol-http@5.6.2':
+    resolution: {integrity: sha512-Asd04MaxODN6FNY8EPTeCAM4kPNi3jDUAjZU0Y4F9rHvpLUrrUo7KLcxFgSthywFr6dZfIyDLIJda6jxmVTk5w==}
     engines: {node: '>=18.0.0'}
 
   '@smithy/signature-v4@5.7.5':
@@ -998,6 +1022,14 @@ packages:
   '@smithy/types@4.20.0':
     resolution: {integrity: sha512-lCA6QG22dPk9ecHbv91jDQZsmtPUjdS1aE2Il6NNPqe7DrYc0dZQi6DhcESk2KYXH2sp5xbAcGdYMZDFnuzA2A==}
     engines: {node: '>=18.0.0'}
+
+  '@smithy/util-buffer-from@2.2.0':
+    resolution: {integrity: sha512-IJdWBbTcMQ6DA0gdNhh/BwrLkDR+ADW5Kr1aZmd4k3DIF6ezMV4R2NIAmT08wQJ3yUK82thHWmC/TnK/wpMMIA==}
+    engines: {node: '>=14.0.0'}
+
+  '@smithy/util-utf8@2.3.0':
+    resolution: {integrity: sha512-R8Rdn8Hy72KKcebgLiv8jQcQkXoLMOGGv5uI1/k0l+snqkOzQ1R0ChUBCxWMlBsFMekWjq0wRudIweFs7sKT5A==}
+    engines: {node: '>=14.0.0'}
 
   '@types/chai@5.2.3':
     resolution: {integrity: sha512-Mw558oeA9fFbv65/y4mHtXDs9bPnFMZAL/jxdPFUpOHHIXX91mcgEHbS5Lahr+pwZFR8A7GQleRWeI6cGFC2UA==}
@@ -2975,6 +3007,18 @@ snapshots:
 
   '@aws-cdk/cloud-assembly-schema@55.4.0': {}
 
+  '@aws-crypto/sha256-js@5.2.0':
+    dependencies:
+      '@aws-crypto/util': 5.2.0
+      '@aws-sdk/types': 3.975.0
+      tslib: 2.9.1
+
+  '@aws-crypto/util@5.2.0':
+    dependencies:
+      '@aws-sdk/types': 3.975.0
+      '@smithy/util-utf8': 2.3.0
+      tslib: 2.9.1
+
   '@aws-sdk/client-dynamodb@3.1164.0':
     dependencies:
       '@aws-sdk/core': 3.980.1
@@ -3798,10 +3842,19 @@ snapshots:
       '@smithy/types': 4.20.0
       tslib: 2.9.1
 
+  '@smithy/is-array-buffer@2.2.0':
+    dependencies:
+      tslib: 2.9.1
+
   '@smithy/node-http-handler@4.14.2':
     dependencies:
       '@smithy/core': 3.39.0
       '@smithy/types': 4.20.0
+      tslib: 2.9.1
+
+  '@smithy/protocol-http@5.6.2':
+    dependencies:
+      '@smithy/core': 3.39.0
       tslib: 2.9.1
 
   '@smithy/signature-v4@5.7.5':
@@ -3812,6 +3865,16 @@ snapshots:
 
   '@smithy/types@4.20.0':
     dependencies:
+      tslib: 2.9.1
+
+  '@smithy/util-buffer-from@2.2.0':
+    dependencies:
+      '@smithy/is-array-buffer': 2.2.0
+      tslib: 2.9.1
+
+  '@smithy/util-utf8@2.3.0':
+    dependencies:
+      '@smithy/util-buffer-from': 2.2.0
       tslib: 2.9.1
 
   '@types/chai@5.2.3':

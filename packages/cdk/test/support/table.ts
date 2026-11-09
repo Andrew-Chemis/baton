@@ -43,13 +43,11 @@ export interface LocalConnection {
 export async function createTable(connection: LocalConnection, table: string): Promise<void> {
   const raw = new DynamoDBClient(connection);
   await raw.send(new CreateTableCommand(createTableInput(table)));
-  /* oxlint-disable eslint/no-await-in-loop -- polling until the table is ACTIVE */
   for (;;) {
     const described = await raw.send(new DescribeTableCommand({ TableName: table }));
     if (described.Table?.TableStatus === 'ACTIVE') break;
     await new Promise((r) => setTimeout(r, 50));
   }
-  /* oxlint-enable eslint/no-await-in-loop */
   await raw.send(
     new UpdateTimeToLiveCommand({
       TableName: table,
