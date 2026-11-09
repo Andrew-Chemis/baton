@@ -1,6 +1,7 @@
 // Requirement 7.2: every write route honours Idempotency-Key and a repeat returns the first response with no second write.
 import { beforeAll, describe, expect, test } from 'vitest';
-import { MINUTE, claimBody, newCard, seeded, type Seeded } from '../support/board.ts';
+import { registerAgent } from '../support/agents.ts';
+import { MINUTE, claimBody, eventsOf, newCard, seeded, type Seeded } from '../support/board.ts';
 
 let s: Seeded;
 beforeAll(async () => {
@@ -20,7 +21,7 @@ describe('R7.2 idempotency keys', () => {
     expect(again.body).toEqual(first.body);
     expect(again.headers['idempotent-replayed']).toBe('true');
     expect(first.headers['idempotent-replayed']).toBeUndefined();
-    const events = (await s.human.get(`/cards/${card.id}/events`)).body.events;
+    const events = await eventsOf(s.human, card.id);
     expect(events.filter((e: any) => e.type === 'commented')).toHaveLength(1);
   });
 
@@ -34,9 +35,7 @@ describe('R7.2 idempotency keys', () => {
     const withNewKey = await agent.post(`/cards/${card.id}/claim`, claimBody(), 'k-claim-2');
     expect(withNewKey.status).toBe(200);
     expect(withNewKey.body.alreadyHeld).toBe(true);
-    expect(
-      (await agent.get(`/cards/${card.id}/events`)).body.events.filter((e: any) => e.type === 'claimed'),
-    ).toHaveLength(1);
+    expect((await eventsOf(agent, card.id)).filter((e: any) => e.type === 'claimed')).toHaveLength(1);
   });
 
   test('a replayed card creation returns the same card, a replayed heartbeat the same lease', async () => {
@@ -80,9 +79,7 @@ describe('R7.2 idempotency keys', () => {
     );
     expect(results.every((r) => r.status === 201)).toBe(true);
     expect(new Set(results.map((r) => JSON.stringify(r.body))).size).toBe(1);
-    expect(
-      (await s.human.get(`/cards/${card.id}/events`)).body.events.filter((e: any) => e.type === 'commented'),
-    ).toHaveLength(1);
+    expect((await eventsOf(s.human, card.id)).filter((e: any) => e.type === 'commented')).toHaveLength(1);
   });
 
   test('a refusal is not remembered: the retry runs again', async () => {
@@ -113,13 +110,11 @@ describe('R7.2 idempotency keys', () => {
     const out = await s.human.post(`/cards/${card.id}/comments`, { text: 'day two' }, 'k-expiry');
     expect(out.status).toBe(201);
     expect(out.headers['idempotent-replayed']).toBeUndefined();
-    expect(
-      (await s.human.get(`/cards/${card.id}/events`)).body.events.filter((e: any) => e.type === 'commented'),
-    ).toHaveLength(2);
+    expect((await eventsOf(s.human, card.id)).filter((e: any) => e.type === 'commented')).toHaveLength(2);
   });
 
   test('a replayed token creation does not hand the secret out of the idempotency record', async () => {
-    const agent = (await s.human.post('/agents', { name: 'Replay check' })).body.agent.id as string;
+    const agent = await registerAgent(s.human, 'Replay check');
     const first = await s.human.post(`/agents/${agent}/tokens`, {}, 'k-token');
     const again = await s.human.post(`/agents/${agent}/tokens`, {}, 'k-token');
     expect(first.body.token).toMatch(/^baton_/);

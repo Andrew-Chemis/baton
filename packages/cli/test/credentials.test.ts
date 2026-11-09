@@ -3,10 +3,11 @@
 import { Sha256 } from '@aws-crypto/sha256-js';
 import { HttpRequest } from '@smithy/protocol-http';
 import { SignatureV4 } from '@smithy/signature-v4';
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { text } from 'node:stream/consumers';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { signRequest } from '../src/sigv4.ts';
 import { REPO, startWorld, type World } from './harness.ts';
@@ -105,10 +106,8 @@ beforeAll(async () => {
   PARAMS['/baton/url'] = w.server.url;
   // The part of SSM this needs: GetParameter, answered only to a request signed by the key it is told about.
   ssm = createServer((req: IncomingMessage, res) => {
-    const chunks: Buffer[] = [];
-    req.on('data', (c: Buffer) => chunks.push(c));
-    req.on('end', () => {
-      const body = Buffer.concat(chunks).toString('utf8');
+    void (async () => {
+      const body = await text(req);
       const auth = req.headers.authorization;
       seen.push({
         target: req.headers['x-amz-target'] as string | undefined,
@@ -130,7 +129,7 @@ beforeAll(async () => {
         return;
       }
       res.end(JSON.stringify({ Parameter: { Name: name, Type: 'SecureString', Value: value } }));
-    });
+    })();
   });
   await new Promise<void>((r) => ssm.listen(0, '127.0.0.1', r));
   const address = ssm.address();
@@ -244,7 +243,7 @@ describe('where the token and address come from', () => {
       env: { ...noToken, AWS_PROFILE: 'sso-dev', PATH: `${bin}:${process.env.PATH ?? ''}` },
     });
     expect(result.code).toBe(0);
-    const calls = (await import('node:fs')).readFileSync(log, 'utf8');
+    const calls = readFileSync(log, 'utf8');
     expect(calls).toContain('ssm get-parameter --name /baton/agent-token --with-decryption');
   });
 
@@ -256,6 +255,6 @@ describe('where the token and address come from', () => {
     chmodSync(script, 0o755);
     const result = await w.baton(['check'], { env: { ...noToken, PATH: `${bin}:${process.env.PATH ?? ''}` } });
     expect(result.error.code).toBe('no_token');
-    expect((await import('node:fs')).existsSync(marker)).toBe(false);
+    expect(existsSync(marker)).toBe(false);
   });
 });

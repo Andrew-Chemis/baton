@@ -1,6 +1,7 @@
 // Requirement 7.2 from the caller's side: a write retried after a lost answer carries the same Idempotency-Key, so the board
 // does it once. Every request below reaches the real service over DynamoDB Local; only the network between is made to fail.
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+import { newAgent } from '../../cdk/test/support/agents.ts';
 import { REPO, startWorld, type World } from './harness.ts';
 
 let w: World;
@@ -112,10 +113,9 @@ describe('retries', () => {
 
   test("a revoked token gets the board's own instruction", async () => {
     const human2 = human();
-    const agent = (await human2.post('/agents', { name: 'revoked-one' })).body.agent;
-    const token = (await human2.post(`/agents/${agent.id}/tokens`, { label: 'x' })).body;
-    await human2.del(`/agents/${agent.id}/tokens/${token.tokenId}`);
-    const result = await w.baton(['check'], { cwd: checkout, env: { BATON_TOKEN: token.token } });
+    const agent = await newAgent(human2, 'revoked-one', { label: 'x' });
+    await human2.del(`/agents/${agent.id}/tokens/${agent.tokenId}`);
+    const result = await w.baton(['check'], { cwd: checkout, env: { BATON_TOKEN: agent.token } });
     expect(result.code).toBe(1);
     expect(result.error.code).toBe('token_revoked');
     expect(result.error.message.length).toBeGreaterThan(30);

@@ -6,6 +6,7 @@ import {
   UpdateTimeToLiveCommand,
   type CreateTableCommandInput,
 } from '@aws-sdk/client-dynamodb';
+import { setTimeout } from 'node:timers/promises';
 import { GSI1, GSI2, GSI3, TABLE_KEYS, TTL_ATTRIBUTE } from '../../src/schema.ts';
 
 export function createTableInput(table: string): CreateTableCommandInput {
@@ -46,7 +47,7 @@ export async function createTable(connection: LocalConnection, table: string): P
   for (;;) {
     const described = await raw.send(new DescribeTableCommand({ TableName: table }));
     if (described.Table?.TableStatus === 'ACTIVE') break;
-    await new Promise((r) => setTimeout(r, 50));
+    await setTimeout(50);
   }
   await raw.send(
     new UpdateTimeToLiveCommand({

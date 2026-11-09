@@ -1,13 +1,15 @@
 // The Lambda behind a plain HTTP server, for the CLI tests, the browser check and local development. It does what API
 // Gateway does in front of the function: runs the token authorizer for /api/agent, attaches a stand-in identity for
 // /api/human (there is no Cognito here), and serves the built web app with the same security headers the edge adds.
-import { createServer, type IncomingMessage, type Server } from 'node:http';
+import { createServer, type Server } from 'node:http';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, normalize } from 'node:path';
+import { text } from 'node:stream/consumers';
 import { CONTENT_SECURITY_POLICY } from '../../src/csp.ts';
 import { AGENT_PREFIX, HUMAN_PREFIX } from '../../src/schema.ts';
 import { authorize, handleHttp, type HttpEvent } from '../../service/router.ts';
 import type { Deps } from '../../service/store.ts';
+import { httpEvent } from './http-event.ts';
 
 const TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -34,14 +36,6 @@ export interface LocalServer {
   server: Server;
 }
 
-const readBody = (req: IncomingMessage) =>
-  new Promise<string>((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    req.on('data', (c: Buffer) => chunks.push(c));
-    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
-    req.on('error', reject);
-  });
-
 export async function startLocalServer(options: LocalServerOptions): Promise<LocalServer> {
   const { deps } = options;
   const email = options.humanEmail ?? 'owner@example.test';
@@ -51,20 +45,18 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
       if (url.pathname.startsWith(`${HUMAN_PREFIX}/`) || url.pathname.startsWith(`${AGENT_PREFIX}/`)) {
         const headers: Record<string, string | undefined> = {};
         for (const [k, v] of Object.entries(req.headers)) headers[k] = Array.isArray(v) ? v.join(',') : v;
-        const body = await readBody(req);
+        const body = await text(req);
         const human = url.pathname.startsWith(`${HUMAN_PREFIX}/`);
         const authorizer: HttpEvent['requestContext']['authorizer'] = human
           ? { jwt: { claims: { sub: 'local-user', email } } }
           : headers.authorization
             ? { lambda: (await authorize(deps, { type: 'REQUEST', routeArn: 'local', headers })).context }
             : undefined;
-        const event: HttpEvent = {
-          rawPath: url.pathname,
-          rawQueryString: url.search.slice(1),
+        const event = httpEvent(req.method ?? 'GET', `${url.pathname}${url.search}`, {
           headers,
           body: body || undefined,
-          requestContext: { http: { method: req.method ?? 'GET' }, ...(authorizer ? { authorizer } : {}) },
-        };
+          authorizer,
+        });
         const out = await handleHttp(deps, event);
         res.writeHead(out.statusCode, out.headers);
         res.end(out.body);

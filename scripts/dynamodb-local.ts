@@ -8,6 +8,7 @@ import { hash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
 import { createServer, connect } from 'node:net';
 import { join, resolve } from 'node:path';
+import { setTimeout } from 'node:timers/promises';
 
 export const root = resolve(import.meta.dirname, '..');
 
@@ -70,7 +71,7 @@ async function waitForPort(port: number, child: ChildProcess, timeoutMs: number)
     if (child.exitCode !== null)
       throw new Error(`DynamoDB Local exited with code ${child.exitCode} before it listened`);
     if (await accepts(port)) return;
-    await new Promise((r) => setTimeout(r, 100));
+    await setTimeout(100);
   }
   /* oxlint-enable eslint/no-await-in-loop */
   throw new Error(`DynamoDB Local did not listen on ${port} within ${timeoutMs} ms`);

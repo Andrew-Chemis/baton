@@ -1,6 +1,6 @@
 // Requirements 3 and 4: what a human does reaches the agent as events it acknowledges, and a backward move reopens work.
 import { beforeAll, describe, expect, test } from 'vitest';
-import { claimBody, newCard, seeded, type Caller, type Seeded } from '../support/board.ts';
+import { claimBody, eventsOf, newCard, seeded, type Caller, type Seeded } from '../support/board.ts';
 
 let s: Seeded;
 let agent: Caller;
@@ -10,8 +10,7 @@ beforeAll(async () => {
 });
 
 const WT = { worktree: '/work/widgets' };
-const events = async (id: string, since = 0) =>
-  (await agent.get(`/cards/${id}/events?since=${since}`)).body.events as any[];
+const events = (id: string, since = 0) => eventsOf(agent, id, since);
 
 /** An agent takes a card, then passes it to review (acknowledging nothing it was not sent). */
 async function passed(title = 'Passed card') {

@@ -4,11 +4,12 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { newBoard, type Board } from '../../cdk/test/support/board.ts';
+import { newAgent } from '../../cdk/test/support/agents.ts';
+import { REPO, newBoard, type Board } from '../../cdk/test/support/board.ts';
 import { startLocalServer, type LocalServer } from '../../cdk/test/support/local-server.ts';
 import { run } from '../src/run.ts';
 
-export const REPO = 'acme/widgets';
+export { REPO };
 export const REMOTE = `https://github.com/${REPO}.git`;
 
 export interface Cli {
@@ -50,19 +51,15 @@ export async function startWorld(): Promise<World> {
   const board = await newBoard();
   const server = await startLocalServer({ deps: board.deps });
   const human = board.as({ human: 'owner@example.test' });
-  const agentId = 'tester';
-  const created = await human.post('/agents', { name: agentId });
-  if (created.status !== 201) throw new Error(`agent: ${JSON.stringify(created.body)}`);
-  const issued = await human.post(`/agents/${created.body.agent.id}/tokens`, { label: 'cli tests' });
-  const token = issued.body.token as string;
+  const agent = await newAgent(human, 'tester', { label: 'cli tests' });
   const dirs: string[] = [];
 
   const world: World = {
     board,
     server,
-    env: { BATON_URL: server.url, BATON_TOKEN: token },
-    token,
-    agentId: created.body.agent.id as string,
+    env: { BATON_URL: server.url, BATON_TOKEN: agent.token },
+    token: agent.token,
+    agentId: agent.id,
     repo(remote = REMOTE) {
       const dir = realpathSync(mkdtempSync(join(tmpdir(), 'baton-repo-')));
       dirs.push(dir);

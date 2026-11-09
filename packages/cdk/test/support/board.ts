@@ -6,6 +6,7 @@ import { AGENT_PREFIX, HUMAN_PREFIX } from '../../src/schema.ts';
 import { configFor } from '../../service/config.ts';
 import { authorize, handleHttp, type HttpEvent } from '../../service/router.ts';
 import { createDocClient, type Deps } from '../../service/store.ts';
+import { httpEvent } from './http-event.ts';
 import { createTable } from './table.ts';
 
 export const T0 = Date.parse('2026-01-01T00:00:00Z');
@@ -33,7 +34,6 @@ export interface Board {
   deps: Deps;
   clock: Clock;
   table: string;
-  endpoint: string;
   /** Calls a route as a person or as an agent whose token the gateway has already accepted. */
   as: (who: Who) => Caller;
   /** Calls an agent route with a real token through the real authorizer. */
@@ -61,58 +61,54 @@ export async function newBoard(options: { leaseMs?: number; heartbeatSeconds?: n
     now: clock.now,
   };
 
+  type Context = HttpEvent['requestContext']['authorizer'];
   const call = async (
     kind: 'human' | 'agent',
-    context: HttpEvent['requestContext']['authorizer'],
+    context: Context,
     method: string,
     path: string,
     body?: unknown,
     key?: string,
   ): Promise<Result> => {
-    const [pathname = '', query = ''] = path.split('?');
-    const event: HttpEvent = {
-      rawPath: `${kind === 'human' ? HUMAN_PREFIX : AGENT_PREFIX}${pathname}`,
-      rawQueryString: query,
+    const event = httpEvent(method, `${kind === 'human' ? HUMAN_PREFIX : AGENT_PREFIX}${path}`, {
       headers: key ? { 'Idempotency-Key': key } : {},
       body: body === undefined ? undefined : JSON.stringify(body),
-      requestContext: { http: { method }, ...(context ? { authorizer: context } : {}) },
-    };
+      authorizer: context,
+    });
     const out = await handleHttp(deps, event);
     return { status: out.statusCode, body: JSON.parse(out.body) as Record<string, any>, headers: out.headers };
   };
-  const caller = (kind: 'human' | 'agent', context: HttpEvent['requestContext']['authorizer']): Caller => ({
-    get: (path) => call(kind, context, 'GET', path),
-    post: (path, body, key) => call(kind, context, 'POST', path, body ?? {}, key),
-    patch: (path, body, key) => call(kind, context, 'PATCH', path, body ?? {}, key),
-    del: (path, key) => call(kind, context, 'DELETE', path, undefined, key),
-  });
+  // `context` may be worked out per call, as when the gateway's authorizer judges the token afresh each time.
+  const caller = (kind: 'human' | 'agent', context: Context | (() => Promise<Context>)): Caller => {
+    const send = async (method: string, path: string, body?: unknown, key?: string) =>
+      call(kind, typeof context === 'function' ? await context() : context, method, path, body, key);
+    return {
+      get: (path) => send('GET', path),
+      post: (path, body, key) => send('POST', path, body ?? {}, key),
+      patch: (path, body, key) => send('PATCH', path, body ?? {}, key),
+      del: (path, key) => send('DELETE', path, undefined, key),
+    };
+  };
 
   return {
     deps,
     clock,
     table,
-    endpoint,
     as: (who) =>
       'human' in who
         ? caller('human', { jwt: { claims: { sub: `sub-${who.human}`, email: who.human } } })
         : caller('agent', { lambda: { verdict: 'ok', agentId: who.agent } }),
-    withToken: (token) => {
-      // Goes through the authorizer exactly as API Gateway would: the verdict it returns becomes the request context.
-      const make = (method: string) => async (path: string, body?: unknown, key?: string) => {
-        const verdict = await authorize(deps, {
-          type: 'REQUEST',
-          routeArn: 'arn-for-test',
-          headers: { authorization: `Bearer ${token}` },
-        });
-        return call('agent', { lambda: verdict.context }, method, path, body, key);
-      };
-      return {
-        get: (path) => make('GET')(path),
-        post: (path, body, key) => make('POST')(path, body ?? {}, key),
-        patch: (path, body, key) => make('PATCH')(path, body ?? {}, key),
-        del: (path, key) => make('DELETE')(path, undefined, key),
-      };
-    },
+    // Goes through the authorizer exactly as API Gateway would: the verdict it returns becomes the request context.
+    withToken: (token) =>
+      caller('agent', async () => ({
+        lambda: (
+          await authorize(deps, {
+            type: 'REQUEST',
+            routeArn: 'arn-for-test',
+            headers: { authorization: `Bearer ${token}` },
+          })
+        ).context,
+      })),
   };
 }
 
@@ -145,4 +141,9 @@ export async function newCard(c: Caller, over: Record<string, unknown> = {}): Pr
   const out = await c.post('/cards', { repo: REPO, title: 'A card', ...over });
   if (out.status !== 201 && out.status !== 200) throw new Error(`card failed: ${JSON.stringify(out.body)}`);
   return out.body.card as Record<string, any>;
+}
+
+/** A card's events, oldest first, as `caller` reads them. */
+export async function eventsOf(caller: Caller, id: string, since = 0): Promise<any[]> {
+  return (await caller.get(`/cards/${id}/events?since=${since}`)).body.events as any[];
 }

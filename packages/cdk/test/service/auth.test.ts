@@ -2,21 +2,20 @@
 import { ScanCommand } from '@aws-sdk/lib-dynamodb';
 import { beforeAll, describe, expect, test } from 'vitest';
 import { authorize, handleHttp } from '../../service/router.ts';
-import { claimBody, newCard, seeded, type Seeded } from '../support/board.ts';
+import { newAgent } from '../support/agents.ts';
+import { claimBody, eventsOf, newCard, seeded, type Seeded } from '../support/board.ts';
+import { httpEvent } from '../support/http-event.ts';
 
 let s: Seeded;
 beforeAll(async () => {
   s = await seeded();
 });
 
-const call = (path: string, authorizerContext: object | undefined, method = 'GET', body?: unknown) =>
-  handleHttp(s.board.deps, {
-    rawPath: path,
-    rawQueryString: '',
-    headers: {},
-    body: body === undefined ? undefined : JSON.stringify(body),
-    requestContext: { http: { method }, ...(authorizerContext ? { authorizer: authorizerContext } : {}) },
-  });
+const call = (path: string, authorizer: object | undefined, method = 'GET', body?: unknown) =>
+  handleHttp(
+    s.board.deps,
+    httpEvent(method, path, { body: body === undefined ? undefined : JSON.stringify(body), authorizer }),
+  );
 
 describe('R6.5 and R7.1 routes reject calls that are not authenticated', () => {
   test('a human route without a JWT context is refused', async () => {
@@ -69,12 +68,7 @@ describe('R6.5 and R7.1 routes reject calls that are not authenticated', () => {
 
 describe('R7.1 tokens: issued and revoked from the board, stored only as a hash', () => {
   test('a human issues a token that works as a bearer token; revoking it stops it, with token_revoked', async () => {
-    const created = await s.human.post('/agents', { name: 'Remote Claude' });
-    expect(created.status).toBe(201);
-    const agentId = created.body.agent.id as string;
-    const issued = await s.human.post(`/agents/${agentId}/tokens`, { label: 'laptop' });
-    expect(issued.status).toBe(201);
-    const token = issued.body.token as string;
+    const { id: agentId, token, tokenId } = await newAgent(s.human, 'Remote Claude', { label: 'laptop' });
     expect(token.startsWith('baton_')).toBe(true);
 
     const withToken = s.board.withToken(token);
@@ -82,15 +76,14 @@ describe('R7.1 tokens: issued and revoked from the board, stored only as a hash'
     const claim = await withToken.post(`/cards/${card.id}/claim`, claimBody());
     expect(claim.status).toBe(200);
     expect(claim.body.card.claim.agentId).toBe(agentId);
-    const events = await withToken.get(`/cards/${card.id}/events`);
-    expect(events.body.events.at(-1).actor).toEqual({ kind: 'agent', id: agentId });
+    expect((await eventsOf(withToken, card.id)).at(-1)?.actor).toEqual({ kind: 'agent', id: agentId });
 
     const listed = await s.human.get('/agents');
     expect(listed.body.agents.find((a: any) => a.id === agentId).tokens).toEqual([
-      { tokenId: issued.body.tokenId, label: 'laptop', createdAt: expect.any(Number) },
+      { tokenId, label: 'laptop', createdAt: expect.any(Number) },
     ]);
 
-    const revoked = await s.human.del(`/agents/${agentId}/tokens/${issued.body.tokenId}`);
+    const revoked = await s.human.del(`/agents/${agentId}/tokens/${tokenId}`);
     expect(revoked.status).toBe(200);
     const after = await withToken.get(`/cards/${card.id}`);
     expect(after.status).toBe(401);
@@ -100,10 +93,8 @@ describe('R7.1 tokens: issued and revoked from the board, stored only as a hash'
   });
 
   test('only the hash is stored: the token appears nowhere in the table', async () => {
-    const created = await s.human.post('/agents', { name: 'Hash check' });
-    const issued = await s.human.post(`/agents/${created.body.agent.id}/tokens`, {}, 'issue-1');
-    const token = issued.body.token as string;
-    await s.human.post(`/agents/${created.body.agent.id}/tokens`, {}, 'issue-1');
+    const { id, token } = await newAgent(s.human, 'Hash check', { key: 'issue-1' });
+    await s.human.post(`/agents/${id}/tokens`, {}, 'issue-1');
     let dump = '';
     let startKey: Record<string, unknown> | undefined;
     do {
@@ -119,9 +110,7 @@ describe('R7.1 tokens: issued and revoked from the board, stored only as a hash'
   });
 
   test('deleting an agent revokes every token it holds', async () => {
-    const created = await s.human.post('/agents', { name: 'Short lived' });
-    const id = created.body.agent.id as string;
-    const t1 = (await s.human.post(`/agents/${id}/tokens`, {})).body.token as string;
+    const { id, token: t1 } = await newAgent(s.human, 'Short lived');
     const t2 = (await s.human.post(`/agents/${id}/tokens`, {})).body.token as string;
     const out = await s.human.del(`/agents/${id}`);
     expect(out.body).toEqual({ deleted: id, revokedTokens: 2 });
@@ -141,7 +130,7 @@ describe('R7.3 events tell human and agent actors apart', () => {
     await agent.post(`/cards/${card.id}/claim`, claimBody());
     await agent.post(`/cards/${card.id}/comments`, { text: 'from the agent' });
     await s.human.post(`/cards/${card.id}/comments`, { text: 'from the human' });
-    const log = (await agent.get(`/cards/${card.id}/events`)).body.events;
+    const log = await eventsOf(agent, card.id);
     expect(log.map((e: any) => `${e.actor.kind}:${e.actor.id}:${e.type}`)).toEqual([
       'human:owner@example.test:created',
       'agent:a1:claimed',
@@ -172,12 +161,10 @@ describe('R7.4 refusals carry a code, the conflicting claim or sequence, and the
     const bad = await s.human.post('/cards', { repo: 'nonsense', title: '' });
     expect(bad.status).toBe(400);
     expect(bad.body.code).toBe('invalid_request');
-    const noJson = await handleHttp(s.board.deps, {
-      rawPath: '/api/human/cards',
-      headers: {},
-      body: '{oops',
-      requestContext: { http: { method: 'POST' }, authorizer: { jwt: { claims: { sub: 'u' } } } },
-    });
+    const noJson = await handleHttp(
+      s.board.deps,
+      httpEvent('POST', '/api/human/cards', { body: '{oops', authorizer: { jwt: { claims: { sub: 'u' } } } }),
+    );
     expect(JSON.parse(noJson.body).message).toContain('valid JSON');
     expect((await s.human.get('/cards')).body.message).toContain('attention=me');
     expect((await s.human.get('/cards/doesnotexist')).status).toBe(404);

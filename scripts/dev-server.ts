@@ -6,6 +6,7 @@ import { randomBytes } from 'node:crypto';
 import { resolve } from 'node:path';
 import { configFor } from '../packages/cdk/service/config.ts';
 import { createDocClient, type Deps } from '../packages/cdk/service/store.ts';
+import { newAgent } from '../packages/cdk/test/support/agents.ts';
 import { createTable } from '../packages/cdk/test/support/table.ts';
 import { startLocalServer } from '../packages/cdk/test/support/local-server.ts';
 import { startDynamoDbLocal } from './dynamodb-local.ts';
@@ -31,12 +32,9 @@ export async function seedDemo(
     if (r.status >= 300) throw new Error(`seed step failed: ${r.status} ${JSON.stringify(r.body)}`);
     return r.body;
   };
-  const token = async (name: string) => {
-    const made = await must(human('POST', '/agents', { name }));
-    return (await must(human('POST', `/agents/${made.agent.id}/tokens`, { label: 'demo' }))).token as string;
-  };
-  const nova = agent(await token('nova'));
-  const orion = agent(await token('orion'));
+  const person = { post: (path: string, body?: unknown) => human('POST', path, body) };
+  const nova = agent((await newAgent(person, 'nova', { label: 'demo' })).token);
+  const orion = agent((await newAgent(person, 'orion', { label: 'demo' })).token);
 
   await must(
     human('POST', '/projects', { name: 'Payments platform', repos: ['acme/payments-api', 'acme/payments-web'] }),

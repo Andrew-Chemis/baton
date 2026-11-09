@@ -1,6 +1,6 @@
 // Requirements 1, 2 and 5 against DynamoDB: the claim is decided by a conditional write, not by the code that calls it.
 import { beforeAll, describe, expect, test } from 'vitest';
-import { MINUTE, REPO, claimBody, newCard, seeded, type Seeded } from '../support/board.ts';
+import { MINUTE, REPO, claimBody, eventsOf, newCard, seeded, type Seeded } from '../support/board.ts';
 
 let s: Seeded;
 beforeAll(async () => {
@@ -25,9 +25,9 @@ describe('R1 one claim per card, decided by the store', () => {
     });
     expect(out.body.card.state).toBe('claimed');
     expect(out.body.alreadyHeld).toBe(false);
-    const events = await agent('a1').get(`/cards/${card.id}/events`);
-    expect(events.body.events.map((e: any) => e.type)).toEqual(['created', 'claimed']);
-    expect(events.body.events[1].actor).toEqual({ kind: 'agent', id: 'a1' });
+    const events = await eventsOf(agent('a1'), card.id);
+    expect(events.map((e: any) => e.type)).toEqual(['created', 'claimed']);
+    expect(events[1].actor).toEqual({ kind: 'agent', id: 'a1' });
   });
 
   test('1.2 many agents claiming at once yield exactly one winner, and every loser is told who holds it', async () => {
@@ -55,8 +55,8 @@ describe('R1 one claim per card, decided by the store', () => {
     }
     const stored = await agent('x').get(`/cards/${card.id}`);
     expect(stored.body.card.claim.agentId).toBe(winner.agentId);
-    const events = await agent('x').get(`/cards/${card.id}/events`);
-    expect(events.body.events.filter((e: any) => e.type === 'claimed')).toHaveLength(1);
+    const events = await eventsOf(agent('x'), card.id);
+    expect(events.filter((e: any) => e.type === 'claimed')).toHaveLength(1);
   });
 
   test('1.2 one shared token from two worktrees is still two claimants', async () => {
@@ -101,7 +101,7 @@ describe('R1 one claim per card, decided by the store', () => {
     const out = await agent('new').post(`/cards/${card.id}/claim`, claimBody({ worktree: '/work/new', branch: 'new' }));
     expect(out.status).toBe(200);
     expect(out.body.card.claim.agentId).toBe('new');
-    const events = (await agent('new').get(`/cards/${card.id}/events`)).body.events;
+    const events = await eventsOf(agent('new'), card.id);
     const taken = events.find((e: any) => e.type === 'taken_over');
     expect(taken.payload.previous).toMatchObject({ agentId: 'gone', worktree: '/work/gone', branch: 'old' });
     expect(out.body.card.lastClaim).toMatchObject({ agentId: 'gone', endedBy: 'taken_over' });
@@ -117,7 +117,7 @@ describe('R1 one claim per card, decided by the store', () => {
       ),
     );
     expect(results.filter((r) => r.status === 200)).toHaveLength(1);
-    const events = (await agent('x').get(`/cards/${card.id}/events`)).body.events;
+    const events = await eventsOf(agent('x'), card.id);
     expect(events.filter((e: any) => e.type === 'taken_over')).toHaveLength(1);
   });
 });
@@ -191,7 +191,7 @@ describe('R2 a stalled agent becomes visible without anyone looking', () => {
         branch: 'feature/one',
         reason,
       });
-      const events = (await agent('a1').get(`/cards/${card.id}/events`)).body.events;
+      const events = await eventsOf(agent('a1'), card.id);
       expect(events.at(-1)).toMatchObject({
         type: 'released',
         payload: { reason },
@@ -216,7 +216,7 @@ describe('R2 a stalled agent becomes visible without anyone looking', () => {
       to: 'blocked',
     });
     expect(moved.body.card.column).toBe('blocked');
-    const events = (await agent('a1').get(`/cards/${card.id}/events`)).body.events;
+    const events = await eventsOf(agent('a1'), card.id);
     expect(events.at(-1).payload).toEqual({ reason: 'blocked', to: 'blocked' });
   });
 

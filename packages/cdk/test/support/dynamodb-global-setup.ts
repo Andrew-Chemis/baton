@@ -6,7 +6,6 @@ import { startDynamoDbLocal, type RunningDynamoDb } from '../../../../scripts/dy
 declare module 'vitest' {
   export interface ProvidedContext {
     dynamodbEndpoint: string;
-    dynamodbBackend: string;
   }
 }
 
@@ -16,19 +15,15 @@ interface Shared {
 }
 const shared: Shared = ((globalThis as { batonDdb?: Shared }).batonDdb ??= { users: 0 });
 
-export default async function setup(project: {
-  provide: (key: 'dynamodbEndpoint' | 'dynamodbBackend', value: string) => void;
-}) {
+export default async function setup(project: { provide: (key: 'dynamodbEndpoint', value: string) => void }) {
   const configured = process.env.DYNAMODB_ENDPOINT;
   shared.users += 1;
   if (configured) {
     project.provide('dynamodbEndpoint', configured);
-    project.provide('dynamodbBackend', `DynamoDB Local at DYNAMODB_ENDPOINT=${configured}`);
   } else {
     shared.running ??= startDynamoDbLocal();
     const running = await shared.running;
     project.provide('dynamodbEndpoint', running.endpoint);
-    project.provide('dynamodbBackend', `DynamoDB Local 3.3.2 started by the test run at ${running.endpoint}`);
   }
   return async () => {
     shared.users -= 1;
