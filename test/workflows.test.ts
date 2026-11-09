@@ -93,12 +93,13 @@ describe('every workflow', () => {
     }
   });
 
-  test.each(files)('%s: pnpm is the version the repository pins', (name) => {
-    const pinned = (JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { packageManager: string })
+  test.each(files)('%s: pnpm comes from the repository packageManager pin, not a second number here', (name) => {
+    const pinned = (JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { packageManager?: string })
       .packageManager;
+    expect(pinned).toMatch(/^pnpm@\d+\.\d+\.\d+$/);
     for (const job of Object.values(workflow(name).jobs)) {
       for (const step of job.steps.filter((s) => s.uses?.startsWith('pnpm/action-setup@'))) {
-        expect(`pnpm@${String(step.with?.version)}`).toBe(pinned);
+        expect(step.with?.version).toBeUndefined();
       }
     }
   });
