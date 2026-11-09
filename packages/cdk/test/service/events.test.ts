@@ -148,6 +148,18 @@ describe('R4 a backward move means the work is not done', () => {
     expect((await agent.get(`/cards/${id}`)).body.card.reopened).toBe(false);
   });
 
+  test('4.2 a holder that takes its own card again after a human moved it backward clears reopened', async () => {
+    const card = await newCard(s.human, { column: 'in_progress' });
+    await agent.post(`/cards/${card.id}/claim`, claimBody());
+    const moved = await s.human.post(`/cards/${card.id}/move`, { to: 'ready' });
+    expect(moved.body.card.reopened).toBe(true);
+    const again = await agent.post(`/cards/${card.id}/claim`, claimBody());
+    expect(again.body.alreadyHeld).toBe(true);
+    expect(again.body.card.reopened).toBe(false);
+    expect((await agent.get(`/cards/${card.id}`)).body.card.reopened).toBe(false);
+    expect((await events(card.id)).filter((e) => e.type === 'claimed')).toHaveLength(1);
+  });
+
   test('4.3 a human move to Done clears the claim and appends released with reason human_done', async () => {
     const card = await newCard(s.human, { column: 'in_progress' });
     await agent.post(`/cards/${card.id}/claim`, claimBody());

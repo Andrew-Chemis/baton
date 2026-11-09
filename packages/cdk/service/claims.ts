@@ -140,13 +140,16 @@ async function planClaim(deps: Deps, card: CardItem, now: number, a: ClaimArgs):
   if (existing && existing.holder === a.me) {
     // Taking a card you hold writes only the lease and where you are now: no second claim, no second event (Requirement 1.4).
     const claim = renewLease(existing, now, leaseMs, { branch: a.branch, session: a.session });
-    return refreshLease(card, claim, (view): ClaimResponse => ({
+    const plan = refreshLease(card, claim, (view): ClaimResponse => ({
       card: view,
       warnings: [],
       pending: [],
       alreadyHeld: true,
       ...timing,
     }));
+    // Taking the card back after a person moved it backward clears `reopened`, as any claim does (Requirement 4.2). That is a
+    // change to the card, so the write is guarded by the sequence like any other.
+    return card.reopened ? { ...plan, next: { ...plan.next, reopened: false }, checkSeq: true } : plan;
   }
 
   assertNotHeldByOther(card, now, a.me);
