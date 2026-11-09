@@ -38,14 +38,17 @@ export interface Condition {
   values?: Values;
 }
 
-export async function getItem<T>(
-  deps: Deps,
-  key: { PK: string; SK: string },
-  consistent = true,
-): Promise<T | undefined> {
-  const out = await deps.db.send(
-    new GetCommand({ TableName: deps.config.table, Key: key, ConsistentRead: consistent }),
-  );
+export interface Key {
+  PK: string;
+  SK: string;
+}
+
+export const EXISTS: Condition = { expr: 'attribute_exists(PK)' };
+export const NOT_EXISTS: Condition = { expr: 'attribute_not_exists(PK)' };
+
+/** A strongly consistent read: every caller decides something from what it gets back. */
+export async function getItem<T>(deps: Deps, key: Key): Promise<T | undefined> {
+  const out = await deps.db.send(new GetCommand({ TableName: deps.config.table, Key: key, ConsistentRead: true }));
   return out.Item as T | undefined;
 }
 
@@ -83,13 +86,13 @@ export class Cancelled extends Error {
   }
 }
 
+const KINDS = ['Put', 'Update', 'Delete', 'ConditionCheck'] as const;
+
 export async function transact(deps: Deps, items: TransactItem[]): Promise<void> {
   const withTable = items.map((item): TransactItem => {
-    if (item.Put) return { Put: { ...item.Put, TableName: deps.config.table } };
-    if (item.Update) return { Update: { ...item.Update, TableName: deps.config.table } };
-    if (item.Delete) return { Delete: { ...item.Delete, TableName: deps.config.table } };
-    if (item.ConditionCheck) return { ConditionCheck: { ...item.ConditionCheck, TableName: deps.config.table } };
-    throw new Error('empty transact item');
+    const kind = KINDS.find((k) => item[k]);
+    if (!kind) throw new Error('empty transact item');
+    return { [kind]: { ...item[kind], TableName: deps.config.table } };
   });
   try {
     await deps.db.send(new TransactWriteCommand({ TransactItems: withTable }));
@@ -112,31 +115,56 @@ export function merge(...conditions: (Condition | undefined)[]): Condition | und
   };
 }
 
+const attributeFields = (c?: Condition) => ({
+  ...(c?.names && Object.keys(c.names).length > 0 ? { ExpressionAttributeNames: c.names } : {}),
+  ...(c?.values && Object.keys(c.values).length > 0 ? { ExpressionAttributeValues: c.values } : {}),
+});
+
+const conditionFields = (c?: Condition) => ({ ...(c ? { ConditionExpression: c.expr } : {}), ...attributeFields(c) });
+
+/** Guards an item inside a transaction without changing it. */
+export function conditionCheck(key: Key, condition: Condition = EXISTS): TransactItem {
+  return {
+    ConditionCheck: { TableName: '', Key: key, ConditionExpression: condition.expr, ...attributeFields(condition) },
+  };
+}
+
+/** An UpdateExpression with its own names and values (`update`), guarded by `condition` (the item must exist, by default). */
+export function updateItem(key: Key, update: Condition, condition: Condition = EXISTS): TransactItem {
+  const both = { names: { ...update.names, ...condition.names }, values: { ...update.values, ...condition.values } };
+  return {
+    Update: {
+      TableName: '',
+      Key: key,
+      UpdateExpression: update.expr,
+      ConditionExpression: condition.expr,
+      ...attributeFields({ expr: condition.expr, ...both }),
+    },
+  };
+}
+
 /**
  * An Update that turns `before` into `after`, touching only the top-level attributes that differ, so a concurrent write to
  * an attribute this operation does not change survives. `condition` decides, at the store, whether the update may happen.
  */
-export function diffUpdate(
-  key: { PK: string; SK: string },
-  before: Item,
-  after: Item,
-  condition?: Condition,
-): TransactItem {
+export function diffUpdate<T extends object>(key: Key, before: T, after: T, condition?: Condition): TransactItem {
+  const was = before as Item;
+  const now = after as Item;
   const sets: string[] = [];
   const removes: string[] = [];
   const names: Names = {};
   const values: Values = {};
   let n = 0;
-  for (const attr of new Set([...Object.keys(before), ...Object.keys(after)])) {
+  for (const attr of new Set([...Object.keys(was), ...Object.keys(now)])) {
     if (attr === 'PK' || attr === 'SK') continue;
-    if (isDeepStrictEqual(before[attr], after[attr])) continue;
+    if (isDeepStrictEqual(was[attr], now[attr])) continue;
     const name = `#d${n}`;
     names[name] = attr;
-    if (after[attr] === undefined) {
+    if (now[attr] === undefined) {
       removes.push(name);
     } else {
       const value = `:d${n}`;
-      values[value] = after[attr];
+      values[value] = now[attr];
       sets.push(`${name} = ${value}`);
     }
     n += 1;
@@ -147,64 +175,18 @@ export function diffUpdate(
   ]
     .filter(Boolean)
     .join(' ');
-  if (!clauses) {
-    // Nothing differs: still guard the item, so the operation's condition is checked.
-    return {
-      ConditionCheck: {
-        TableName: '',
-        Key: key,
-        ConditionExpression: condition?.expr ?? 'attribute_exists(PK)',
-        ...(condition?.names && Object.keys(condition.names).length > 0
-          ? { ExpressionAttributeNames: condition.names }
-          : {}),
-        ...(condition?.values && Object.keys(condition.values).length > 0
-          ? { ExpressionAttributeValues: condition.values }
-          : {}),
-      },
-    };
-  }
-  const allNames = { ...names, ...condition?.names };
-  const allValues = { ...values, ...condition?.values };
-  return {
-    Update: {
-      TableName: '',
-      Key: key,
-      UpdateExpression: clauses,
-      ConditionExpression: condition?.expr ?? 'attribute_exists(PK)',
-      ExpressionAttributeNames: allNames,
-      ...(Object.keys(allValues).length > 0 ? { ExpressionAttributeValues: allValues } : {}),
-    },
-  };
+  // Nothing differs: still guard the item, so the operation's condition is checked.
+  if (!clauses) return conditionCheck(key, condition);
+  return updateItem(key, { expr: clauses, names, values }, condition);
 }
 
-export function putItem(item: Item, condition?: Condition): TransactItem {
-  return {
-    Put: {
-      TableName: '',
-      Item: item,
-      ...(condition ? { ConditionExpression: condition.expr } : {}),
-      ...(condition?.names && Object.keys(condition.names).length > 0
-        ? { ExpressionAttributeNames: condition.names }
-        : {}),
-      ...(condition?.values && Object.keys(condition.values).length > 0
-        ? { ExpressionAttributeValues: condition.values }
-        : {}),
-    },
-  };
+export function putItem(item: object, condition?: Condition): TransactItem {
+  return { Put: { TableName: '', Item: item as Item, ...conditionFields(condition) } };
 }
 
-export function deleteItem(key: { PK: string; SK: string }, condition?: Condition): TransactItem {
-  return {
-    Delete: {
-      TableName: '',
-      Key: key,
-      ...(condition ? { ConditionExpression: condition.expr } : {}),
-      ...(condition?.names && Object.keys(condition.names).length > 0
-        ? { ExpressionAttributeNames: condition.names }
-        : {}),
-      ...(condition?.values && Object.keys(condition.values).length > 0
-        ? { ExpressionAttributeValues: condition.values }
-        : {}),
-    },
-  };
+/** A Put that fails if the item already exists. */
+export const putNew = (item: object): TransactItem => putItem(item, NOT_EXISTS);
+
+export function deleteItem(key: Key, condition?: Condition): TransactItem {
+  return { Delete: { TableName: '', Key: key, ...conditionFields(condition) } };
 }

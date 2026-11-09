@@ -4,7 +4,7 @@
 //   node scripts/dynamodb-local.ts run   [--port 8000]   run in the foreground until interrupted
 // Library use: startDynamoDbLocal() picks a free port and returns the endpoint and a stop function.
 import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { hash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
 import { createServer, connect } from 'node:net';
 import { join, resolve } from 'node:path';
@@ -19,7 +19,7 @@ export const DYNAMODB_LOCAL = {
   sha256: '7a94eb65f81aee270738751a4e5e3e6a7ad02a5d25194f55b83e08ec2ba6342b',
 } as const;
 
-const sha256File = (file: string) => createHash('sha256').update(readFileSync(file)).digest('hex');
+const sha256File = (file: string) => hash('sha256', readFileSync(file));
 
 /** Downloads and unpacks the pinned tarball once; returns the directory holding DynamoDBLocal.jar. */
 export function ensureDynamoDbLocal(): string {

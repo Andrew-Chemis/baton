@@ -12,7 +12,7 @@ interface Detail {
   events: EventView[];
 }
 
-export function describeEvent(e: EventView): string {
+function describeEvent(e: EventView): string {
   const p = e.payload as Record<string, any>;
   switch (e.type) {
     case 'created':

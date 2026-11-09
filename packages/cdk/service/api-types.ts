@@ -14,7 +14,6 @@ export const COLUMN_RANK: Record<Column, number | null> = {
 };
 
 export const RELEASE_REASONS = ['done', 'paused', 'blocked', 'session_ended'] as const;
-export type ReleaseReason = (typeof RELEASE_REASONS)[number];
 
 export type ErrorCode =
   | 'claim_held'

@@ -1,6 +1,6 @@
 // AWS Signature Version 4 with Node's crypto, enough to call one JSON-protocol service. This is why the CLI has no
 // dependency on the AWS SDK: it needs a single signed request, to read the token from SSM, and nothing else.
-import { createHash, createHmac } from 'node:crypto';
+import { createHmac, hash } from 'node:crypto';
 
 export interface Credentials {
   accessKeyId: string;
@@ -8,7 +8,7 @@ export interface Credentials {
   sessionToken?: string | undefined;
 }
 
-const hex = (data: string | Buffer) => createHash('sha256').update(data).digest('hex');
+const hex = (data: string | Buffer) => hash('sha256', data);
 const hmac = (key: string | Buffer, data: string) => createHmac('sha256', key).update(data).digest();
 
 const encode = (s: string) =>

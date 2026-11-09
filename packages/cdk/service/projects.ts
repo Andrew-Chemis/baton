@@ -15,7 +15,16 @@ import {
   repoKey,
 } from './keys.ts';
 import { asObject, normalizeName, normalizeRepo, stringList } from './validate.ts';
-import { deleteItem, diffUpdate, getItem, putItem, queryAll, type Deps, type TransactItem } from './store.ts';
+import {
+  deleteItem,
+  diffUpdate,
+  getItem,
+  putNew,
+  queryAll,
+  updateItem,
+  type Deps,
+  type TransactItem,
+} from './store.ts';
 
 const MAX_REPOS = 25;
 
@@ -48,7 +57,7 @@ const emptyCounts = (): ProjectCounts => ({
   inReview: 0,
 });
 
-export function foldCounts(cards: CardItem[], now: number): ProjectCounts {
+function foldCounts(cards: CardItem[], now: number): ProjectCounts {
   const counts = emptyCounts();
   for (const card of cards) {
     if (card.archived) continue;
@@ -167,14 +176,12 @@ async function addRepos(deps: Deps, project: ProjectItem, repos: string[], now: 
     updatedAt: now,
   });
   const items: TransactItem[] = [
-    diffUpdate(projectKey(project.id), project as never, next as never, {
+    diffUpdate(projectKey(project.id), project, next, {
       expr: '#rev = :rev0',
       names: { '#rev': 'rev' },
       values: { ':rev0': project.rev },
     }),
-    ...repos.map((repo) =>
-      putItem({ ...repoKey(repo), type: 'repo', repo, projectId: project.id }, { expr: 'attribute_not_exists(PK)' }),
-    ),
+    ...repos.map((repo) => putNew({ ...repoKey(repo), type: 'repo', repo, projectId: project.id })),
   ];
   return {
     items,
@@ -230,14 +237,9 @@ export async function registerProject(deps: Deps, ctx: RequestCtx, input: unknow
       updatedAt: now,
     });
     const items: TransactItem[] = [
-      putItem(item as never, { expr: 'attribute_not_exists(PK)' }),
-      putItem(
-        { ...projectNameKey(nameKey), type: 'project-name', projectId: id },
-        { expr: 'attribute_not_exists(PK)' },
-      ),
-      ...repos.map((repo) =>
-        putItem({ ...repoKey(repo), type: 'repo', repo, projectId: id }, { expr: 'attribute_not_exists(PK)' }),
-      ),
+      putNew(item),
+      putNew({ ...projectNameKey(nameKey), type: 'project-name', projectId: id }),
+      ...repos.map((repo) => putNew({ ...repoKey(repo), type: 'repo', repo, projectId: id })),
     ];
     return {
       items,
@@ -285,28 +287,20 @@ export async function patchProject(deps: Deps, ctx: RequestCtx, id: string, inpu
       updatedAt: now,
     });
     const items: TransactItem[] = [
-      diffUpdate(projectKey(id), project as never, next as never, {
+      diffUpdate(projectKey(id), project, next, {
         expr: '#rev = :rev0',
         names: { '#rev': 'rev' },
         values: { ':rev0': project.rev },
       }),
     ];
     const addAt = items.length;
-    for (const repo of add)
-      items.push(
-        putItem({ ...repoKey(repo), type: 'repo', repo, projectId: id }, { expr: 'attribute_not_exists(PK)' }),
-      );
+    for (const repo of add) items.push(putNew({ ...repoKey(repo), type: 'repo', repo, projectId: id }));
     for (const repo of remove) {
       items.push(deleteItem(repoKey(repo), { expr: '#p = :p', names: { '#p': 'projectId' }, values: { ':p': id } }));
     }
     const nameAt = items.length;
     if (renamed && rename) {
-      items.push(
-        putItem(
-          { ...projectNameKey(rename.nameKey), type: 'project-name', projectId: id },
-          { expr: 'attribute_not_exists(PK)' },
-        ),
-      );
+      items.push(putNew({ ...projectNameKey(rename.nameKey), type: 'project-name', projectId: id }));
       items.push(deleteItem(projectNameKey(project.nameKey)));
     }
     const view = await projectView(deps, next, now, true);
@@ -348,7 +342,7 @@ export async function archiveProject(deps: Deps, ctx: RequestCtx, id: string): P
     const next = projectItem({ ...project, archived: true, repos: [], rev: project.rev + 1, updatedAt: now });
     const items: TransactItem[] = [
       // Any card write since the read bumped rev, so a claim that landed after the check above fails this update.
-      diffUpdate(projectKey(id), project as never, next as never, {
+      diffUpdate(projectKey(id), project, next, {
         expr: '#rev = :rev0',
         names: { '#rev': 'rev' },
         values: { ':rev0': project.rev },
@@ -379,13 +373,9 @@ export async function archiveProject(deps: Deps, ctx: RequestCtx, id: string): P
 }
 
 /** The Update that records a card event on its project. One per transaction; `rev` moves so project edits notice. */
-export const touchProject = (projectId: string, now: number): TransactItem => ({
-  Update: {
-    TableName: '',
-    Key: projectKey(projectId),
-    UpdateExpression: 'SET #l = :now ADD #rev :one',
-    ConditionExpression: 'attribute_exists(PK)',
-    ExpressionAttributeNames: { '#l': 'lastEventAt', '#rev': 'rev' },
-    ExpressionAttributeValues: { ':now': now, ':one': 1 },
-  },
-});
+export const touchProject = (projectId: string, now: number): TransactItem =>
+  updateItem(projectKey(projectId), {
+    expr: 'SET #l = :now ADD #rev :one',
+    names: { '#l': 'lastEventAt', '#rev': 'rev' },
+    values: { ':now': now, ':one': 1 },
+  });

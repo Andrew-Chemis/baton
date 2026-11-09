@@ -1,19 +1,30 @@
 // Agent identities and their bearer tokens (Requirement 7.1). A token is shown once and stored only as its SHA-256.
-import { createHash } from 'node:crypto';
+import { hash } from 'node:crypto';
 import { GSI1 } from '../src/schema.ts';
 import type { AgentTokenView, AgentView } from './api-types.ts';
 import { execute, type Reply, type RequestCtx } from './engine.ts';
 import { ApiError, badRequest, notFound } from './errors.ts';
 import { newId, newToken, slugify } from './ids.ts';
 import type { AgentItem, AgentTokenItem, TokenItem } from './items.ts';
-import { AGENTS_PARTITION, agentKey, agentTokenKey, tokenKey } from './keys.ts';
-import { deleteItem, getItem, putItem, queryAll, type Deps, type TransactItem } from './store.ts';
+import { AGENT_TOKEN_PREFIX, AGENTS_PARTITION, agentKey, agentTokenKey, tokenKey } from './keys.ts';
+import {
+  conditionCheck,
+  deleteItem,
+  EXISTS,
+  getItem,
+  putItem,
+  putNew,
+  queryAll,
+  updateItem,
+  type Deps,
+  type TransactItem,
+} from './store.ts';
 import { asObject, normalizeName, text } from './validate.ts';
 
 const MAX_TOKENS_PER_AGENT = 20;
 const TOMBSTONE_MS = 30 * 24 * 60 * 60 * 1000;
 
-export const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
+const sha256 = (value: string) => hash('sha256', value);
 
 const tokenView = (t: AgentTokenItem): AgentTokenView => ({
   tokenId: t.tokenId,
@@ -25,7 +36,7 @@ async function tokensOf(deps: Deps, agentId: string): Promise<AgentTokenItem[]> 
   return queryAll<AgentTokenItem>(deps, {
     KeyConditionExpression: '#pk = :pk AND begins_with(#sk, :prefix)',
     ExpressionAttributeNames: { '#pk': 'PK', '#sk': 'SK' },
-    ExpressionAttributeValues: { ':pk': `AGENT#${agentId}`, ':prefix': 'TOK#' },
+    ExpressionAttributeValues: { ':pk': agentKey(agentId).PK, ':prefix': AGENT_TOKEN_PREFIX },
   });
 }
 
@@ -63,7 +74,7 @@ export function createAgent(deps: Deps, ctx: RequestCtx, input: unknown): Promis
       createdAt: now,
     };
     return {
-      items: [putItem(item as never, { expr: 'attribute_not_exists(PK)' })],
+      items: [putNew(item)],
       reply: { status: 201, body: { agent: { id, name, createdAt: now, tokens: [] } satisfies AgentView } },
       classify: (c) =>
         c.failed(0)
@@ -82,7 +93,7 @@ export function deleteAgent(deps: Deps, ctx: RequestCtx, id: string): Promise<Re
     const agent = await getItem<AgentItem>(deps, agentKey(id));
     if (!agent) throw notFound(`No agent "${id}".`);
     const tokens = await tokensOf(deps, id);
-    const items: TransactItem[] = [deleteItem(agentKey(id), { expr: 'attribute_exists(PK)' })];
+    const items: TransactItem[] = [deleteItem(agentKey(id), EXISTS)];
     for (const t of tokens) {
       items.push(deleteItem(agentTokenKey(id, t.tokenId)));
       items.push(tombstone(t.sha256, now));
@@ -92,16 +103,12 @@ export function deleteAgent(deps: Deps, ctx: RequestCtx, id: string): Promise<Re
 }
 
 /** Revoked tokens stay as a short-lived tombstone so the API can answer `token_revoked` rather than a bare refusal. */
-const tombstone = (sha: string, now: number): TransactItem => ({
-  Update: {
-    TableName: '',
-    Key: tokenKey(sha),
-    UpdateExpression: 'SET #r = :now, #ttl = :ttl',
-    ConditionExpression: 'attribute_exists(PK)',
-    ExpressionAttributeNames: { '#r': 'revokedAt', '#ttl': 'ttl' },
-    ExpressionAttributeValues: { ':now': now, ':ttl': Math.ceil((now + TOMBSTONE_MS) / 1000) },
-  },
-});
+const tombstone = (sha: string, now: number): TransactItem =>
+  updateItem(tokenKey(sha), {
+    expr: 'SET #r = :now, #ttl = :ttl',
+    names: { '#r': 'revokedAt', '#ttl': 'ttl' },
+    values: { ':now': now, ':ttl': Math.ceil((now + TOMBSTONE_MS) / 1000) },
+  });
 
 export function createToken(deps: Deps, ctx: RequestCtx, agentId: string, input: unknown): Promise<Reply> {
   const label = (text(asObject(input).label, 'label', { max: 80, optional: true }) ?? 'token').trim() || 'token';
@@ -126,11 +133,7 @@ export function createToken(deps: Deps, ctx: RequestCtx, agentId: string, input:
       createdAt: now,
     };
     return {
-      items: [
-        putItem(tokenItem as never, { expr: 'attribute_not_exists(PK)' }),
-        putItem(listing as never),
-        { ConditionCheck: { TableName: '', Key: agentKey(agentId), ConditionExpression: 'attribute_exists(PK)' } },
-      ],
+      items: [putNew(tokenItem), putItem(listing), conditionCheck(agentKey(agentId))],
       reply: {
         status: 201,
         body: {
@@ -159,16 +162,13 @@ export function revokeToken(deps: Deps, ctx: RequestCtx, agentId: string, tokenI
     const listing = await getItem<AgentTokenItem>(deps, agentTokenKey(agentId, tokenId));
     if (!listing) throw notFound(`Agent "${agentId}" has no token "${tokenId}" (it may already be revoked).`);
     return {
-      items: [
-        deleteItem(agentTokenKey(agentId, tokenId), { expr: 'attribute_exists(PK)' }),
-        tombstone(listing.sha256, now),
-      ],
+      items: [deleteItem(agentTokenKey(agentId, tokenId), EXISTS), tombstone(listing.sha256, now)],
       reply: { status: 200, body: { revoked: tokenId } },
     };
   });
 }
 
-export type TokenVerdict = { verdict: 'ok'; agentId: string } | { verdict: 'revoked' | 'unknown' };
+type TokenVerdict = { verdict: 'ok'; agentId: string } | { verdict: 'revoked' | 'unknown' };
 
 export async function verifyToken(deps: Deps, bearer: string): Promise<TokenVerdict> {
   if (!bearer.startsWith('baton_') || bearer.length > 200) return { verdict: 'unknown' };

@@ -11,7 +11,7 @@ import {
   diffUpdate,
   getItem,
   merge,
-  putItem,
+  putNew,
   type Cancelled,
   type Condition,
   type Deps,
@@ -59,11 +59,11 @@ export function cardOp(
         : { expr: '#seq = :seq0', names: { '#seq': 'seq' }, values: { ':seq0': card.seq } };
     const condition = merge(seqGuard, plan.condition);
     const items: TransactItem[] = [
-      diffUpdate({ PK: card.PK, SK: 'META' }, card as never, next as never, condition),
-      ...(plan.events ?? []).map((event) => putItem(event as never, { expr: 'attribute_not_exists(PK)' })),
+      diffUpdate({ PK: card.PK, SK: 'META' }, card, next, condition),
+      ...(plan.events ?? []).map(putNew),
       ...(plan.touch === false ? [] : [touchProject(card.projectId, now)]),
       ...(plan.extra ?? []),
     ];
-    return { items, reply, retryOn: [0], ...(plan.classify ? { classify: plan.classify } : {}) };
+    return { items, reply, retryOn: [0], classify: plan.classify };
   });
 }

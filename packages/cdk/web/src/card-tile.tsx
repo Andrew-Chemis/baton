@@ -7,7 +7,7 @@ const slugOf = (card: CardView): string | null => (card.key ? (card.key.split('/
 
 export type TilePointerEvent = PointerEvent & { currentTarget: HTMLElement };
 
-export interface TileProps {
+interface TileProps {
   card: CardView;
   now: number;
   showRepo: boolean;

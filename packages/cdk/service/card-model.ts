@@ -1,12 +1,12 @@
 // Pure functions over card items: derived keys, derived state, views. No I/O.
 import type { Actor, CardState, CardView, ClaimView, EventType, EventView, LastClaimView } from './api-types.ts';
-import { boardPartition, boardSort, cardKey, attentionPartition, repoPartition } from './keys.ts';
+import { attentionPartition, boardPartition, boardSort, cardKey, eventKey, repoPartition } from './keys.ts';
 import type { CardItem, ClaimItem, EventItem, LastClaimItem } from './items.ts';
 
 export type CardFields = Omit<CardItem, 'PK' | 'SK' | 'GSI1PK' | 'GSI1SK' | 'GSI2PK' | 'GSI2SK' | 'GSI3PK' | 'GSI3SK'>;
 
 /** The card needs its last agent's attention: reopened, or a human event it has not acknowledged. */
-export const needsAttention = (card: CardFields): boolean =>
+const needsAttention = (card: CardFields): boolean =>
   card.lastAgentId !== undefined && !card.archived && (card.reopened || card.lastHumanSeq > card.ackedSeq);
 
 /** Attaches every key attribute, derived from the logical fields so a move or an ack can never leave an index stale. */
@@ -95,8 +95,7 @@ export function appendEvents(card: CardFields, actor: Actor, now: number, specs:
     seq += 1;
     if (actor.kind === 'human' && STEERING.has(spec.type)) lastHumanSeq = seq;
     return {
-      PK: `CARD#${card.id}`,
-      SK: `EVT#${String(seq).padStart(8, '0')}`,
+      ...eventKey(card.id, seq),
       type: 'event',
       cardId: card.id,
       seq,

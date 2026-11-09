@@ -9,7 +9,7 @@ import { COLUMNS } from './api-types.ts';
 import { createAgent, createToken, deleteAgent, listAgents, revokeToken, verifyToken } from './agents.ts';
 import { archiveCard, commentCard, createCard, getCard, listCards, listEvents, patchCard } from './cards.ts';
 import { ackCard, claimCard, heartbeatCard, moveCard, releaseCard } from './claims.ts';
-import { fingerprintOf, type Reply, type RequestCtx } from './engine.ts';
+import { idempotencyOf, type Reply, type RequestCtx } from './engine.ts';
 import { ApiError, badRequest, forbidden, notFound, unauthorized } from './errors.ts';
 import { archiveProject, listProjects, patchProject, registerProject } from './projects.ts';
 import type { Deps } from './store.ts';
@@ -53,6 +53,12 @@ interface Route {
 
 const ok = (body: unknown, status = 200): Promise<Reply> => Promise.resolve({ status, body });
 
+/** Adapts a module function that takes the card, project or agent id after the context into a route handler. */
+const byId =
+  (fn: (deps: Deps, ctx: RequestCtx, id: string, body: unknown) => Promise<Reply>): Route['run'] =>
+  ({ deps, ctx, params, body }) =>
+    fn(deps, ctx, params.id as string, body);
+
 const route = (method: string, path: string, who: Who, run: Route['run']): Route => ({
   method,
   segments: path.split('/').filter(Boolean),
@@ -60,7 +66,7 @@ const route = (method: string, path: string, who: Who, run: Route['run']): Route
   run,
 });
 
-export const ROUTES: Route[] = [
+const ROUTES: Route[] = [
   route('GET', '/config', 'both', ({ deps }) =>
     ok({
       leaseSeconds: Math.round(deps.config.leaseMs / 1000),
@@ -72,12 +78,8 @@ export const ROUTES: Route[] = [
     ok(await listProjects(deps, { repo: query.get('repo') ?? undefined, counts: query.get('counts') !== '0' })),
   ),
   route('POST', '/projects', 'both', ({ deps, ctx, body }) => registerProject(deps, ctx, body)),
-  route('PATCH', '/projects/:id', 'both', ({ deps, ctx, params, body }) =>
-    patchProject(deps, ctx, params.id as string, body),
-  ),
-  route('POST', '/projects/:id/archive', 'both', ({ deps, ctx, params }) =>
-    archiveProject(deps, ctx, params.id as string),
-  ),
+  route('PATCH', '/projects/:id', 'both', byId(patchProject)),
+  route('POST', '/projects/:id/archive', 'both', byId(archiveProject)),
 
   route('GET', '/cards', 'both', async ({ deps, ctx, query }) =>
     ok(
@@ -93,41 +95,25 @@ export const ROUTES: Route[] = [
   ),
   route('POST', '/cards', 'both', ({ deps, ctx, body }) => createCard(deps, ctx, body)),
   route('GET', '/cards/:id', 'both', async ({ deps, params }) => ok(await getCard(deps, params.id as string))),
-  route('PATCH', '/cards/:id', 'both', ({ deps, ctx, params, body }) =>
-    patchCard(deps, ctx, params.id as string, body),
-  ),
-  route('POST', '/cards/:id/move', 'both', ({ deps, ctx, params, body }) =>
-    moveCard(deps, ctx, params.id as string, body),
-  ),
-  route('POST', '/cards/:id/comments', 'both', ({ deps, ctx, params, body }) =>
-    commentCard(deps, ctx, params.id as string, body),
-  ),
+  route('PATCH', '/cards/:id', 'both', byId(patchCard)),
+  route('POST', '/cards/:id/move', 'both', byId(moveCard)),
+  route('POST', '/cards/:id/comments', 'both', byId(commentCard)),
   route('GET', '/cards/:id/events', 'both', async ({ deps, params, query }) => {
     const since = Number(query.get('since') ?? 0);
     if (!Number.isInteger(since) || since < 0)
       throw badRequest('since must be a whole number: the last sequence you have read.');
     return ok(await listEvents(deps, params.id as string, since));
   }),
-  route('POST', '/cards/:id/claim', 'agent', ({ deps, ctx, params, body }) =>
-    claimCard(deps, ctx, params.id as string, body),
-  ),
-  route('POST', '/cards/:id/heartbeat', 'agent', ({ deps, ctx, params, body }) =>
-    heartbeatCard(deps, ctx, params.id as string, body),
-  ),
-  route('POST', '/cards/:id/ack', 'agent', ({ deps, ctx, params, body }) =>
-    ackCard(deps, ctx, params.id as string, body),
-  ),
-  route('POST', '/cards/:id/release', 'agent', ({ deps, ctx, params, body }) =>
-    releaseCard(deps, ctx, params.id as string, body),
-  ),
-  route('POST', '/cards/:id/archive', 'human', ({ deps, ctx, params }) => archiveCard(deps, ctx, params.id as string)),
+  route('POST', '/cards/:id/claim', 'agent', byId(claimCard)),
+  route('POST', '/cards/:id/heartbeat', 'agent', byId(heartbeatCard)),
+  route('POST', '/cards/:id/ack', 'agent', byId(ackCard)),
+  route('POST', '/cards/:id/release', 'agent', byId(releaseCard)),
+  route('POST', '/cards/:id/archive', 'human', byId(archiveCard)),
 
   route('GET', '/agents', 'human', async ({ deps }) => ok(await listAgents(deps))),
   route('POST', '/agents', 'human', ({ deps, ctx, body }) => createAgent(deps, ctx, body)),
-  route('DELETE', '/agents/:id', 'human', ({ deps, ctx, params }) => deleteAgent(deps, ctx, params.id as string)),
-  route('POST', '/agents/:id/tokens', 'human', ({ deps, ctx, params, body }) =>
-    createToken(deps, ctx, params.id as string, body),
-  ),
+  route('DELETE', '/agents/:id', 'human', byId(deleteAgent)),
+  route('POST', '/agents/:id/tokens', 'human', byId(createToken)),
   route('DELETE', '/agents/:id/tokens/:tokenId', 'human', ({ deps, ctx, params }) =>
     revokeToken(deps, ctx, params.id as string, params.tokenId as string),
   ),
@@ -173,15 +159,16 @@ function resolveActor(event: HttpEvent, kind: ActorKind): Actor {
   return { kind: 'agent', id: context.agentId };
 }
 
-const header = (event: HttpEvent, name: string): string | undefined => {
+const header = (source: { headers?: Record<string, string | undefined> }, name: string): string | undefined => {
   const wanted = name.toLowerCase();
-  for (const [k, v] of Object.entries(event.headers ?? {})) if (k.toLowerCase() === wanted) return v;
+  for (const [k, v] of Object.entries(source.headers ?? {})) if (k.toLowerCase() === wanted) return v;
   return undefined;
 };
 
-const WRITES = new Set(['POST', 'PATCH', 'DELETE', 'PUT']);
+/** Where each caller kind's routes live: the gateway puts a different authorizer in front of each. */
+const PREFIX: Record<ActorKind, string> = { human: HUMAN_PREFIX, agent: AGENT_PREFIX };
 
-export function respond(status: number, body: unknown, extra: Record<string, string> = {}): HttpResult {
+function respond(status: number, body: unknown, extra: Record<string, string> = {}): HttpResult {
   return {
     statusCode: status,
     headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...extra },
@@ -192,21 +179,14 @@ export function respond(status: number, body: unknown, extra: Record<string, str
 export async function handleHttp(deps: Deps, event: HttpEvent): Promise<HttpResult> {
   try {
     const path = event.rawPath;
-    const kind: ActorKind | undefined = path.startsWith(`${HUMAN_PREFIX}/`)
-      ? 'human'
-      : path.startsWith(`${AGENT_PREFIX}/`)
-        ? 'agent'
-        : undefined;
+    const kind = (Object.keys(PREFIX) as ActorKind[]).find((k) => path.startsWith(`${PREFIX[k]}/`));
     if (!kind)
       throw notFound(
         `No such path ${path}. The API lives under ${HUMAN_PREFIX}/ (web app) and ${AGENT_PREFIX}/ (agents).`,
       );
     const actor = resolveActor(event, kind);
     const method = event.requestContext.http.method.toUpperCase();
-    const segments = path
-      .slice((kind === 'human' ? HUMAN_PREFIX : AGENT_PREFIX).length)
-      .split('/')
-      .filter(Boolean);
+    const segments = path.slice(PREFIX[kind].length).split('/').filter(Boolean);
     const found = match(method, segments);
     if (!found) throw notFound(`No route ${method} ${path}.`);
     if (found.route.who !== 'both' && found.route.who !== kind) {
@@ -226,13 +206,7 @@ export async function handleHttp(deps: Deps, event: HttpEvent): Promise<HttpResu
         throw badRequest('The request body is not valid JSON.');
       }
     }
-    const ctx: RequestCtx = { actor };
-    const key = header(event, 'idempotency-key');
-    if (WRITES.has(method) && key !== undefined) {
-      if (!/^[\w.:-]{1,200}$/.test(key))
-        throw badRequest('Idempotency-Key must be 1 to 200 characters of letters, digits and . _ : -.');
-      ctx.idem = { key, fingerprint: fingerprintOf(method, path, rawBody) };
-    }
+    const ctx: RequestCtx = { actor, idem: idempotencyOf(method, path, rawBody, header(event, 'idempotency-key')) };
     const query = new URLSearchParams(event.rawQueryString ?? '');
     const reply = await found.route.run({ deps, ctx, params: found.params, query, body });
     return respond(reply.status, reply.body, reply.replayed ? { 'idempotent-replayed': 'true' } : {});
@@ -269,7 +243,7 @@ export interface AuthorizerResult {
  * which is the longest a revoked token keeps working.
  */
 export async function authorize(deps: Deps, event: AuthorizerEvent): Promise<AuthorizerResult> {
-  const value = header(event as unknown as HttpEvent, 'authorization') ?? '';
+  const value = header(event, 'authorization') ?? '';
   const bearer = /^Bearer\s+(\S+)$/i.exec(value)?.[1] ?? '';
   const verdict = await verifyToken(deps, bearer);
   return {

@@ -27,5 +27,3 @@ const isAuthorizerEvent = (event: unknown): event is AuthorizerEvent =>
 export async function handler(event: HttpEvent | AuthorizerEvent): Promise<HttpResult | AuthorizerResult> {
   return isAuthorizerEvent(event) ? authorize(deps(), event) : handleHttp(deps(), event);
 }
-
-export { handleHttp, authorize };

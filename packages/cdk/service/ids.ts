@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 
 const ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz';
 
-function randomChars(count: number): string {
+export function randomChars(count: number): string {
   const bytes = randomBytes(count);
   let out = '';
   for (const byte of bytes) out += ALPHABET[byte % ALPHABET.length];
@@ -27,5 +27,3 @@ export function slugify(text: string): string {
     .slice(0, 40);
   return slug || 'project';
 }
-
-export { randomChars };

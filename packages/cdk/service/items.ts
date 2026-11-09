@@ -1,4 +1,4 @@
-// What is stored. The wire shapes live in api-types.ts; views.ts turns one into the other.
+// What is stored. The wire shapes live in api-types.ts; card-model.ts turns one into the other.
 import type { Actor, Column, EventType } from './api-types.ts';
 
 export interface ClaimItem {

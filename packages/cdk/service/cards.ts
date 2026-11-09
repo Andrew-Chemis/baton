@@ -8,12 +8,20 @@ import { execute, type Reply, type RequestCtx } from './engine.ts';
 import { ApiError, badRequest, forbidden } from './errors.ts';
 import { newId } from './ids.ts';
 import type { CardItem, EventItem, ClaimItem } from './items.ts';
-import { attentionPartition, boardPartition, cardKeyItem, columnPrefix, repoKey, repoPartition } from './keys.ts';
+import {
+  attentionPartition,
+  boardPartition,
+  cardKeyItem,
+  columnPrefix,
+  eventRange,
+  repoKey,
+  repoPartition,
+} from './keys.ts';
 import { touchProject } from './projects.ts';
-import { getItem, putItem, queryAll, type Deps, type TransactItem } from './store.ts';
+import { getItem, putNew, queryAll, type Deps, type TransactItem } from './store.ts';
 import { asObject, normalizeRepo, stringList, text } from './validate.ts';
 
-export const isColumn = (value: unknown): value is Column =>
+const isColumn = (value: unknown): value is Column =>
   typeof value === 'string' && (COLUMNS as readonly string[]).includes(value);
 
 export function columnOf(value: unknown, field = 'column'): Column {
@@ -101,12 +109,10 @@ export async function createCard(deps: Deps, ctx: RequestCtx, input: unknown): P
     ]);
     const card = keyed({ ...fields, seq });
     const items: TransactItem[] = [
-      putItem(card as never, { expr: 'attribute_not_exists(PK)' }),
-      ...events.map((e) => putItem(e as never, { expr: 'attribute_not_exists(PK)' })),
+      putNew(card),
+      ...events.map(putNew),
       touchProject(projectId, now),
-      ...(key
-        ? [putItem({ ...cardKeyItem(key), type: 'card-key', cardId: id }, { expr: 'attribute_not_exists(PK)' })]
-        : []),
+      ...(key ? [putNew({ ...cardKeyItem(key), type: 'card-key', cardId: id })] : []),
     ];
     const keyIndex = items.length - 1;
     return {
@@ -126,7 +132,7 @@ const byBoardOrder = (a: CardItem, b: CardItem) =>
   COLUMNS.indexOf(a.column) - COLUMNS.indexOf(b.column) ||
   (a.pos < b.pos ? -1 : a.pos > b.pos ? 1 : a.id < b.id ? -1 : 1);
 
-export interface CardQuery {
+interface CardQuery {
   project?: string | undefined;
   repo?: string | undefined;
   column?: string | undefined;
@@ -271,14 +277,9 @@ export async function listEvents(
 ): Promise<{ events: EventView[]; seq: number }> {
   const card = await loadCard(deps, id);
   const events = await queryAll<EventItem>(deps, {
-    // BETWEEN, not a bare lower bound: the card's own META item sorts after every EVT# key.
     KeyConditionExpression: '#pk = :pk AND #sk BETWEEN :lo AND :hi',
     ExpressionAttributeNames: { '#pk': 'PK', '#sk': 'SK' },
-    ExpressionAttributeValues: {
-      ':pk': `CARD#${id}`,
-      ':lo': `EVT#${String(since + 1).padStart(8, '0')}`,
-      ':hi': 'EVT#99999999',
-    },
+    ExpressionAttributeValues: { ':pk': card.PK, ':lo': eventRange(since).lo, ':hi': eventRange(since).hi },
     Limit: limit,
   });
   return { events: events.map(toEventView), seq: card.seq };
@@ -291,7 +292,7 @@ export async function pendingHumanEvents(deps: Deps, card: CardItem): Promise<Ev
   return all.events.filter((e) => e.actor.kind === 'human' && e.type !== 'created');
 }
 
-export type MoveTarget = { to: Column; pos: string };
+type MoveTarget = { to: Column; pos: string };
 
 export async function resolveTarget(deps: Deps, card: CardItem, to: Column, pos: unknown): Promise<MoveTarget> {
   if (pos !== undefined && !isPos(pos))
