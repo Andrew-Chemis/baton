@@ -36,7 +36,7 @@ interface RepoItem {
   repo: string;
 }
 
-export function projectItem(p: Omit<ProjectItem, 'PK' | 'SK' | 'GSI1PK' | 'GSI1SK' | 'type'>): ProjectItem {
+function projectItem(p: Omit<ProjectItem, 'PK' | 'SK' | 'GSI1PK' | 'GSI1SK' | 'type'>): ProjectItem {
   return {
     ...p,
     ...projectKey(p.id),
@@ -73,7 +73,7 @@ function foldCounts(cards: CardItem[], now: number): ProjectCounts {
   return counts;
 }
 
-export const boardCards = (deps: Deps, projectId: string) =>
+const boardCards = (deps: Deps, projectId: string) =>
   queryAll<CardItem>(deps, {
     IndexName: GSI1.name,
     KeyConditionExpression: '#pk = :pk',
@@ -81,23 +81,19 @@ export const boardCards = (deps: Deps, projectId: string) =>
     ExpressionAttributeValues: { ':pk': boardPartition(projectId) },
   });
 
-export async function projectView(
-  deps: Deps,
-  item: ProjectItem,
-  now: number,
-  withCounts: boolean,
-): Promise<ProjectView> {
-  const view: ProjectView = {
-    id: item.id,
-    name: item.name,
-    repos: item.repos,
-    archived: item.archived,
-    lastEventAt: item.lastEventAt,
-    createdAt: item.createdAt,
-  };
-  if (withCounts) view.counts = foldCounts(await boardCards(deps, item.id), now);
-  return view;
-}
+/** The wire shape of a project; `counts` only where the route promises them. */
+const toProjectView = (item: ProjectItem, counts?: ProjectCounts): ProjectView => ({
+  id: item.id,
+  name: item.name,
+  repos: item.repos,
+  archived: item.archived,
+  lastEventAt: item.lastEventAt,
+  createdAt: item.createdAt,
+  ...(counts ? { counts } : {}),
+});
+
+const projectView = async (deps: Deps, item: ProjectItem, now: number, withCounts: boolean): Promise<ProjectView> =>
+  toProjectView(item, withCounts ? foldCounts(await boardCards(deps, item.id), now) : undefined);
 
 export async function listProjects(
   deps: Deps,
@@ -118,7 +114,7 @@ export async function listProjects(
   return { projects: await Promise.all(items.map((item) => projectView(deps, item, now, query.counts))) };
 }
 
-export async function loadProject(deps: Deps, id: string): Promise<ProjectItem> {
+async function loadProject(deps: Deps, id: string): Promise<ProjectItem> {
   const item = await getItem<ProjectItem>(deps, projectKey(id));
   if (!item) throw notFound(`No project "${id}". List projects with GET /projects, or register one.`);
   return item;
@@ -152,54 +148,36 @@ function parseRepos(value: unknown, field: string): string[] {
   return [...new Set(list)];
 }
 
-const projectReply = async (
-  deps: Deps,
-  item: ProjectItem,
-  now: number,
-  status: number,
-  extra: object = {},
-): Promise<Reply> => ({
-  status,
-  body: { project: await projectView(deps, item, now, true), ...extra },
-});
+const putRepo = (repo: string, projectId: string): TransactItem =>
+  putNew({ ...repoKey(repo), type: 'repo', repo, projectId });
+
+/** Frees `repo` for another project, provided this one still holds it. */
+const releaseRepo = (repo: string, projectId: string): TransactItem =>
+  deleteItem(repoKey(repo), { expr: '#p = :p', names: { '#p': 'projectId' }, values: { ':p': projectId } });
+
+/** Writes `next` over `project`; any change to the project since it was read bumped `rev`, so this then fails. */
+const updateProject = (project: ProjectItem, next: ProjectItem): TransactItem =>
+  diffUpdate(projectKey(project.id), project, next, {
+    expr: '#rev = :rev0',
+    names: { '#rev': 'rev' },
+    values: { ':rev0': project.rev },
+  });
+
+/** Refuses repos the project already holds, naming the project (Requirement 10.2), and a list longer than it may hold. */
+async function assertCanAdd(deps: Deps, project: ProjectItem, add: string[], resulting: string[]): Promise<void> {
+  const held = add.filter((r) => project.repos.includes(r));
+  if (held.length > 0) throw await repoTaken(deps, held[0] as string);
+  if (resulting.length > MAX_REPOS) throw badRequest(`A project may hold at most ${MAX_REPOS} repos.`);
+}
 
 /** Adds repos to a project that exists. A repo it already holds is refused, naming the project (Requirement 10.2). */
 async function addRepos(deps: Deps, project: ProjectItem, repos: string[], now: number): Promise<Attempt> {
-  const held = repos.filter((r) => project.repos.includes(r));
-  if (held.length > 0) throw await repoTaken(deps, held[0] as string);
-  if (project.repos.length + repos.length > MAX_REPOS)
-    throw badRequest(`A project may hold at most ${MAX_REPOS} repos.`);
-  const next = projectItem({
-    ...project,
-    repos: [...project.repos, ...repos],
-    rev: project.rev + 1,
-    updatedAt: now,
-  });
-  const items: TransactItem[] = [
-    diffUpdate(projectKey(project.id), project, next, {
-      expr: '#rev = :rev0',
-      names: { '#rev': 'rev' },
-      values: { ':rev0': project.rev },
-    }),
-    ...repos.map((repo) => putNew({ ...repoKey(repo), type: 'repo', repo, projectId: project.id })),
-  ];
+  const resulting = [...project.repos, ...repos];
+  await assertCanAdd(deps, project, repos, resulting);
+  const next = projectItem({ ...project, repos: resulting, rev: project.rev + 1, updatedAt: now });
   return {
-    items,
-    reply: {
-      status: 200,
-      body: {
-        project: {
-          id: next.id,
-          name: next.name,
-          repos: next.repos,
-          archived: false,
-          lastEventAt: next.lastEventAt,
-          createdAt: next.createdAt,
-        },
-        created: false,
-        added: repos,
-      },
-    },
+    items: [updateProject(project, next), ...repos.map((repo) => putRepo(repo, project.id))],
+    reply: { status: 200, body: { project: toProjectView(next), created: false, added: repos } },
     retryOn: [0],
     classify: async (c) => {
       const index = repos.findIndex((_, i) => c.failed(1 + i));
@@ -214,7 +192,7 @@ export async function registerProject(deps: Deps, ctx: RequestCtx, input: unknow
   const repos = parseRepos(body.repos, 'repos');
   const ifExists = body.ifExists === undefined ? 'refuse' : body.ifExists;
   if (ifExists !== 'add' && ifExists !== 'refuse') throw badRequest('ifExists must be "add" or "refuse".');
-  const reply = await execute(deps, ctx, async (now) => {
+  return execute(deps, ctx, async (now) => {
     const named = await getItem<NameItem>(deps, projectNameKey(nameKey));
     if (named) {
       const existing = await loadProject(deps, named.projectId);
@@ -239,17 +217,13 @@ export async function registerProject(deps: Deps, ctx: RequestCtx, input: unknow
     const items: TransactItem[] = [
       putNew(item),
       putNew({ ...projectNameKey(nameKey), type: 'project-name', projectId: id }),
-      ...repos.map((repo) => putNew({ ...repoKey(repo), type: 'repo', repo, projectId: id })),
+      ...repos.map((repo) => putRepo(repo, id)),
     ];
     return {
       items,
       reply: {
         status: 201,
-        body: {
-          project: { id, name, repos, archived: false, lastEventAt: now, createdAt: now, counts: emptyCounts() },
-          created: true,
-          added: repos,
-        },
+        body: { project: toProjectView(item, emptyCounts()), created: true, added: repos },
       },
       classify: async (c) => {
         // The name or the id appeared between the read and the write: read again and take the add or refuse path.
@@ -259,7 +233,6 @@ export async function registerProject(deps: Deps, ctx: RequestCtx, input: unknow
       },
     };
   });
-  return reply;
 }
 
 export async function patchProject(deps: Deps, ctx: RequestCtx, id: string, input: unknown): Promise<Reply> {
@@ -273,11 +246,10 @@ export async function patchProject(deps: Deps, ctx: RequestCtx, id: string, inpu
     if (project.archived) throw badRequest(`Project "${project.name}" is archived and can no longer be changed.`);
     const missing = remove.filter((r) => !project.repos.includes(r));
     if (missing.length > 0) throw badRequest(`Project "${project.name}" does not hold ${missing.join(', ')}.`);
-    const held = add.filter((r) => project.repos.includes(r));
-    if (held.length > 0) throw await repoTaken(deps, held[0] as string);
     const repos = [...project.repos.filter((r) => !remove.includes(r)), ...add];
-    if (repos.length > MAX_REPOS) throw badRequest(`A project may hold at most ${MAX_REPOS} repos.`);
-    const renamed = rename && rename.nameKey !== project.nameKey;
+    await assertCanAdd(deps, project, add, repos);
+    // Only a new name key is a change of name here; a respelling keeps the key and just rewrites the name.
+    const renamed = rename && rename.nameKey !== project.nameKey ? rename : undefined;
     const next = projectItem({
       ...project,
       name: rename ? rename.name : project.name,
@@ -286,21 +258,13 @@ export async function patchProject(deps: Deps, ctx: RequestCtx, id: string, inpu
       rev: project.rev + 1,
       updatedAt: now,
     });
-    const items: TransactItem[] = [
-      diffUpdate(projectKey(id), project, next, {
-        expr: '#rev = :rev0',
-        names: { '#rev': 'rev' },
-        values: { ':rev0': project.rev },
-      }),
-    ];
+    const items: TransactItem[] = [updateProject(project, next)];
     const addAt = items.length;
-    for (const repo of add) items.push(putNew({ ...repoKey(repo), type: 'repo', repo, projectId: id }));
-    for (const repo of remove) {
-      items.push(deleteItem(repoKey(repo), { expr: '#p = :p', names: { '#p': 'projectId' }, values: { ':p': id } }));
-    }
+    for (const repo of add) items.push(putRepo(repo, id));
+    for (const repo of remove) items.push(releaseRepo(repo, id));
     const nameAt = items.length;
-    if (renamed && rename) {
-      items.push(putNew({ ...projectNameKey(rename.nameKey), type: 'project-name', projectId: id }));
+    if (renamed) {
+      items.push(putNew({ ...projectNameKey(renamed.nameKey), type: 'project-name', projectId: id }));
       items.push(deleteItem(projectNameKey(project.nameKey)));
     }
     const view = await projectView(deps, next, now, true);
@@ -311,8 +275,8 @@ export async function patchProject(deps: Deps, ctx: RequestCtx, id: string, inpu
       classify: async (c) => {
         const addIndex = add.findIndex((_, i) => c.failed(addAt + i));
         if (addIndex >= 0) return await repoTaken(deps, add[addIndex] as string);
-        if (renamed && c.failed(nameAt) && rename) {
-          const named = await getItem<NameItem>(deps, projectNameKey(rename.nameKey));
+        if (renamed && c.failed(nameAt)) {
+          const named = await getItem<NameItem>(deps, projectNameKey(renamed.nameKey));
           const holder = named ? await getItem<ProjectItem>(deps, projectKey(named.projectId)) : undefined;
           return holder ? nameTaken(holder) : 'retry';
         }
@@ -326,7 +290,9 @@ export async function patchProject(deps: Deps, ctx: RequestCtx, id: string, inpu
 export async function archiveProject(deps: Deps, ctx: RequestCtx, id: string): Promise<Reply> {
   return execute(deps, ctx, async (now) => {
     const project = await loadProject(deps, id);
-    if (project.archived) return { items: [], reply: await projectReply(deps, project, now, 200) };
+    if (project.archived) {
+      return { items: [], reply: { status: 200, body: { project: await projectView(deps, project, now, true) } } };
+    }
     const cards = await boardCards(deps, id);
     const claimed = cards.filter((c) => !c.archived && stateOf(c, now) === 'claimed');
     if (claimed.length > 0) {
@@ -340,35 +306,13 @@ export async function archiveProject(deps: Deps, ctx: RequestCtx, id: string): P
       );
     }
     const next = projectItem({ ...project, archived: true, repos: [], rev: project.rev + 1, updatedAt: now });
+    // Any card write since the read bumped rev, so a claim that landed after the check above fails this update.
     const items: TransactItem[] = [
-      // Any card write since the read bumped rev, so a claim that landed after the check above fails this update.
-      diffUpdate(projectKey(id), project, next, {
-        expr: '#rev = :rev0',
-        names: { '#rev': 'rev' },
-        values: { ':rev0': project.rev },
-      }),
+      updateProject(project, next),
       deleteItem(projectNameKey(project.nameKey)),
-      ...project.repos.map((repo) =>
-        deleteItem(repoKey(repo), { expr: '#p = :p', names: { '#p': 'projectId' }, values: { ':p': id } }),
-      ),
+      ...project.repos.map((repo) => releaseRepo(repo, id)),
     ];
-    return {
-      items,
-      reply: {
-        status: 200,
-        body: {
-          project: {
-            id,
-            name: project.name,
-            repos: [],
-            archived: true,
-            lastEventAt: project.lastEventAt,
-            createdAt: project.createdAt,
-          },
-        },
-      },
-      retryOn: [0],
-    };
+    return { items, reply: { status: 200, body: { project: toProjectView(next) } }, retryOn: [0] };
   });
 }
 
