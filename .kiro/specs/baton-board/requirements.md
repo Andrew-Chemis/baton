@@ -150,8 +150,11 @@ few lines.
 
 Acceptance criteria:
 
-- THE SYSTEM SHALL ship a CLI with `list`, `create`, `claim`, `heartbeat`,
-  `check`, `ack`, `comment`, `move` and `release`, each printing JSON.
+- THE SYSTEM SHALL ship a CLI with `list`, `create`, `take`, `heartbeat`,
+  `check`, `ack`, `comment`, `move`, `pass` and `drop`, each printing JSON.
+  `take` claims a card, including one whose lease has expired; `pass` releases
+  it and moves it on (to `in_review` unless `--to` names a column); `drop`
+  releases it in place with a reason (`paused`, `blocked`).
 - THE SYSTEM SHALL detect repo, worktree and branch from the current git
   checkout and SHALL fail with a named cause when outside one.
 - THE SYSTEM SHALL read its token and endpoint from the environment, and
@@ -159,9 +162,9 @@ Acceptance criteria:
 - THE SYSTEM SHALL provide a heartbeat hook that runs on tool use at most once
   per minute, and a stop hook that releases the card with reason
   `session_ended` and a comment when a session ends holding a claim.
-- THE SYSTEM SHALL ship a `SKILL.md` that tells an agent to list and claim
-  before editing, to check and ack before moving to In review or Done, and to
-  release on stop.
+- THE SYSTEM SHALL ship a `SKILL.md` that tells an agent to list and take
+  before editing, to check and ack before passing to In review or Done, and
+  to drop on stop.
 
 ## Requirement 9: the main app repo consumes the board from npm
 

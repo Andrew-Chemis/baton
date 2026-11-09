@@ -18,7 +18,7 @@ Status: active
     `Idempotency-Key` returns first body; actor kind on events
   - R8.1-8.4 → CLI subcommands print JSON; outside a git tree fails named;
     env then SSM token resolution; heartbeat hook throttles to one a minute;
-    stop hook releases `session_ended`
+    stop hook drops with `session_ended`; `pass` defaults to `in_review`
   - R9.1-9.3, 9.6 → pack test: tarball holds `lib/`, `assets/api/index.js`,
     `assets/web/index.html`; bin runs from the installed package; versions
     equal; string check fails on a planted account id in a fixture
@@ -27,7 +27,7 @@ Status: active
   - Synth test: `manifest.missing` empty; one Lambda asset; no Secrets Manager,
     no KMS key, no provisioned capacity in the template
 - [ ] 2. Research the unverified facts in `design.md` and amend it <!-- pattern: solo -->
-- [ ] 3. Repo scaffold: pnpm workspace, `packages/cdk` and `packages/cli`, oxlint, oxfmt, vitest, `ci.yml`, account-string check, licence <!-- pattern: advisor -->
+- [ ] 3. Repo scaffold: pnpm workspace, `packages/cdk` and `packages/cli`, oxlint, oxfmt, vitest, `ci.yml`, account-string check <!-- pattern: advisor -->
 - [ ] 4. `BatonBoard` and `BatonDistribution` constructs: table, GSIs, TTL, user pool, HTTP API with both authorizers, Lambda from `assets/api`, SPA from `assets/web` <!-- pattern: advisor -->
 - [ ] 5. Service: card, event and claim modules with the conditional writes and transactions <!-- pattern: advisor -->
 - [ ] 6. Service: auth, idempotency, error codes, listing states <!-- pattern: advisor -->

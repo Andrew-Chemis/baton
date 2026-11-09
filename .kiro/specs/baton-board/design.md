@@ -149,11 +149,14 @@ expired), unowned (in-progress column, no claim), reopened, unread (owner's
 `hooks/heartbeat.sh`, `hooks/stop.sh`. The CLI resolves repo from the origin
 URL, worktree from `git rev-parse --show-toplevel`, branch from `git
 rev-parse --abbrev-ref HEAD`, and session from `CLAUDE_SESSION_ID` when set.
-A claim writes `.git/baton-card` (worktree-local) so the hooks know which
-card to heartbeat and release without arguments. `SKILL.md` prescribes the
-loop: `list` for the repo, `claim` or stop, work, `check` plus `ack` before
-any `move` to `in_review` or `done`, `release --reason done` or let the stop
-hook release with `session_ended`.
+`take` writes `.git/baton-card` (worktree-local) so the hooks know which
+card to heartbeat and drop without arguments. The verbs follow the metaphor:
+`take` is the claim route, `pass` is release plus move (reason `done`, `--to`
+defaults to `in_review`), `drop` is release in place (`--reason paused` or
+`blocked`); the API keeps the nouns `claim` and `release`. `SKILL.md`
+prescribes the loop: `list` for the repo, `take` or stop, work, `check` plus
+`ack` before any `pass`, `drop` when stopping early, or let the stop hook
+drop with `session_ended`.
 
 ## Packages
 
@@ -169,7 +172,7 @@ stack the way tributary does. Props: `domainName`, `certificate`,
 consumer runs no build of this code. `aws-cdk-lib` and `constructs` are peers.
 
 `@andrewchemis/baton-cli` is one dependency-free Node script with a `bin`,
-so `npx @andrewchemis/baton-cli claim <id>` works in a remote session
+so `npx @andrewchemis/baton-cli take <id>` works in a remote session
 without `pnpm install`. Both packages share one version pinned in lockstep
 (`workspace:*` packs as exact).
 
