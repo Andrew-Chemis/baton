@@ -48,12 +48,13 @@ const COMMANDS: Record<string, Verb | { usage: string; run: Record<string, Verb>
   hook: { usage: commands.HOOK_USAGE, run: { heartbeat: commands.hookHeartbeat, stop: commands.hookStop } },
 };
 
+/** The word is typed by a person or a model, so only the table's own entries count: `constructor` is not a command. */
 function pick(verb: string, rest: string[]): { handler: Verb; positional: string[] } {
-  const found = COMMANDS[verb];
+  const found = Object.hasOwn(COMMANDS, verb) ? COMMANDS[verb] : undefined;
   if (!found) throw new UsageError(`Unknown command "${verb}".`);
   if (typeof found === 'function') return { handler: found, positional: rest };
   const [sub, ...tail] = rest;
-  const handler = sub === undefined ? undefined : found.run[sub];
+  const handler = sub !== undefined && Object.hasOwn(found.run, sub) ? found.run[sub] : undefined;
   if (!handler) throw new UsageError(found.usage);
   return { handler, positional: tail };
 }
