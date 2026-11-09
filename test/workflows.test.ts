@@ -198,7 +198,8 @@ describe('changelog.yml', () => {
     expect(release?.env?.GITHUB_TOKEN).toBe('${{ steps.app-token.outputs.token }}');
     expect(text('changelog.yml')).not.toMatch(/npm (publish|stage)/);
     expect(job.environment).toBeUndefined();
-    expect(job.permissions).not.toHaveProperty('id-token');
+    // Nothing is written with the workflow token: the checkout keeps no credentials and semantic-release gets the app token.
+    expect(job.permissions).toEqual({ contents: 'read' });
   });
 });
 

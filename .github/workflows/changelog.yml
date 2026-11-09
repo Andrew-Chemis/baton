@@ -28,10 +28,9 @@ jobs:
     if: ${{ !github.event.repository.private }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # The workflow token only reads the code for the checkout; every write goes through the app token below.
     permissions:
-      contents: write
-      issues: write
-      pull-requests: write
+      contents: read
     steps:
       - name: Generate GitHub App token
         id: app-token
