@@ -20,5 +20,5 @@
     "noUnusedParameters": true,
     "noUncheckedIndexedAccess": true
   },
-  "include": ["packages/*/src/**/*.ts", "packages/*/service/**/*.ts", "packages/*/web/**/*.ts", "packages/*/web/**/*.tsx", "packages/*/test/**/*.ts", "packages/*/test/**/*.tsx", "packages/*/scripts/**/*.ts", "packages/*/scripts/**/*.mts", "packages/*/web/*.mts", "scripts/*.ts", "test/*.ts", "vitest.config.ts"]
+  "include": ["packages/*/src/**/*.ts", "packages/*/service/**/*.ts", "packages/*/web/**/*.ts", "packages/*/web/**/*.tsx", "packages/*/web/**/*.d.ts", "packages/*/test/**/*.ts", "packages/*/test/**/*.tsx", "packages/*/scripts/**/*.ts", "packages/*/scripts/**/*.mts", "packages/*/web/*.mts", "scripts/*.ts", "test/*.ts", "vitest.config.ts"]
 }
