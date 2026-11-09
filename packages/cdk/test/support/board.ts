@@ -1,0 +1,191 @@
+// A board for one test file: a real table in DynamoDB Local (or whatever DYNAMODB_ENDPOINT names), a clock the test moves,
+// and callers that go through the same router the Lambda uses.
+import {
+  CreateTableCommand,
+  DescribeTableCommand,
+  DynamoDBClient,
+  UpdateTimeToLiveCommand,
+  type CreateTableCommandInput,
+} from '@aws-sdk/client-dynamodb';
+import { randomBytes } from 'node:crypto';
+import { inject } from 'vitest';
+import { AGENT_PREFIX, GSI1, GSI2, GSI3, HUMAN_PREFIX, TABLE_KEYS, TTL_ATTRIBUTE } from '../../src/schema.ts';
+import { authorize, handleHttp, type HttpEvent } from '../../service/router.ts';
+import { createDocClient, type Deps } from '../../service/store.ts';
+
+export function createTableInput(table: string): CreateTableCommandInput {
+  const gsi = (g: { name: string; pk: string; sk: string }) => ({
+    IndexName: g.name,
+    KeySchema: [
+      { AttributeName: g.pk, KeyType: 'HASH' as const },
+      { AttributeName: g.sk, KeyType: 'RANGE' as const },
+    ],
+    Projection: { ProjectionType: 'ALL' as const },
+  });
+  return {
+    TableName: table,
+    BillingMode: 'PAY_PER_REQUEST',
+    AttributeDefinitions: [TABLE_KEYS.pk, TABLE_KEYS.sk, GSI1.pk, GSI1.sk, GSI2.pk, GSI2.sk, GSI3.pk, GSI3.sk].map(
+      (n) => ({
+        AttributeName: n,
+        AttributeType: 'S' as const,
+      }),
+    ),
+    KeySchema: [
+      { AttributeName: TABLE_KEYS.pk, KeyType: 'HASH' },
+      { AttributeName: TABLE_KEYS.sk, KeyType: 'RANGE' },
+    ],
+    GlobalSecondaryIndexes: [gsi(GSI1), gsi(GSI2), gsi(GSI3)],
+  };
+}
+
+export const T0 = Date.parse('2026-01-01T00:00:00Z');
+export const MINUTE = 60_000;
+
+export interface Clock {
+  now: () => number;
+  advance: (ms: number) => void;
+}
+
+export function makeClock(start = T0): Clock {
+  let current = start;
+  return { now: () => current, advance: (ms) => void (current += ms) };
+}
+
+export type Who = { human: string } | { agent: string };
+
+export interface Result<T = Record<string, any>> {
+  status: number;
+  body: T;
+  headers: Record<string, string>;
+}
+
+export interface Board {
+  deps: Deps;
+  clock: Clock;
+  table: string;
+  endpoint: string;
+  /** Calls a route as a person or as an agent whose token the gateway has already accepted. */
+  as: (who: Who) => Caller;
+  /** Calls an agent route with a real token through the real authorizer. */
+  withToken: (token: string) => Caller;
+}
+
+export interface Caller {
+  get: (path: string) => Promise<Result>;
+  post: (path: string, body?: unknown, key?: string) => Promise<Result>;
+  patch: (path: string, body?: unknown, key?: string) => Promise<Result>;
+  del: (path: string, key?: string) => Promise<Result>;
+}
+
+export async function newBoard(options: { leaseMs?: number; heartbeatSeconds?: number } = {}): Promise<Board> {
+  const endpoint = inject('dynamodbEndpoint');
+  // Explicit, so credentials in the environment (a session token for a real account, say) can never reach a test.
+  const credentials = { accessKeyId: 'local', secretAccessKey: 'local' };
+  const region = 'us-west-2';
+  const table = `baton-test-${randomBytes(6).toString('hex')}`;
+  const raw = new DynamoDBClient({ endpoint, region, credentials });
+  await raw.send(new CreateTableCommand(createTableInput(table)));
+  for (;;) {
+    const described = await raw.send(new DescribeTableCommand({ TableName: table }));
+    if (described.Table?.TableStatus === 'ACTIVE') break;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  await raw.send(
+    new UpdateTimeToLiveCommand({
+      TableName: table,
+      TimeToLiveSpecification: { AttributeName: TTL_ATTRIBUTE, Enabled: true },
+    }),
+  );
+  const clock = makeClock();
+  const deps: Deps = {
+    db: createDocClient({ endpoint, region, credentials }),
+    config: { table, leaseMs: options.leaseMs ?? 10 * MINUTE, heartbeatSeconds: options.heartbeatSeconds ?? 60 },
+    now: clock.now,
+  };
+
+  const call = async (
+    kind: 'human' | 'agent',
+    context: HttpEvent['requestContext']['authorizer'],
+    method: string,
+    path: string,
+    body?: unknown,
+    key?: string,
+  ): Promise<Result> => {
+    const [pathname = '', query = ''] = path.split('?');
+    const event: HttpEvent = {
+      rawPath: `${kind === 'human' ? HUMAN_PREFIX : AGENT_PREFIX}${pathname}`,
+      rawQueryString: query,
+      headers: key ? { 'Idempotency-Key': key } : {},
+      body: body === undefined ? undefined : JSON.stringify(body),
+      requestContext: { http: { method }, ...(context ? { authorizer: context } : {}) },
+    };
+    const out = await handleHttp(deps, event);
+    return { status: out.statusCode, body: JSON.parse(out.body) as Record<string, any>, headers: out.headers };
+  };
+  const caller = (kind: 'human' | 'agent', context: HttpEvent['requestContext']['authorizer']): Caller => ({
+    get: (path) => call(kind, context, 'GET', path),
+    post: (path, body, key) => call(kind, context, 'POST', path, body ?? {}, key),
+    patch: (path, body, key) => call(kind, context, 'PATCH', path, body ?? {}, key),
+    del: (path, key) => call(kind, context, 'DELETE', path, undefined, key),
+  });
+
+  return {
+    deps,
+    clock,
+    table,
+    endpoint,
+    as: (who) =>
+      'human' in who
+        ? caller('human', { jwt: { claims: { sub: `sub-${who.human}`, email: who.human } } })
+        : caller('agent', { lambda: { verdict: 'ok', agentId: who.agent } }),
+    withToken: (token) => {
+      // Goes through the authorizer exactly as API Gateway would: the verdict it returns becomes the request context.
+      const make = (method: string) => async (path: string, body?: unknown, key?: string) => {
+        const verdict = await authorize(deps, {
+          type: 'REQUEST',
+          routeArn: 'arn-for-test',
+          headers: { authorization: `Bearer ${token}` },
+        });
+        return call('agent', { lambda: verdict.context }, method, path, body, key);
+      };
+      return {
+        get: (path) => make('GET')(path),
+        post: (path, body, key) => make('POST')(path, body ?? {}, key),
+        patch: (path, body, key) => make('PATCH')(path, body ?? {}, key),
+        del: (path, key) => make('DELETE')(path, undefined, key),
+      };
+    },
+  };
+}
+
+export const REPO = 'acme/widgets';
+
+export interface Seeded {
+  board: Board;
+  human: Caller;
+  projectId: string;
+}
+
+/** A board with one project holding REPO. */
+export async function seeded(options: Parameters<typeof newBoard>[0] = {}): Promise<Seeded> {
+  const board = await newBoard(options);
+  const human = board.as({ human: 'owner@example.test' });
+  const created = await human.post('/projects', { name: 'Widgets', repos: [REPO] });
+  if (created.status !== 201) throw new Error(`seed failed: ${JSON.stringify(created.body)}`);
+  return { board, human, projectId: created.body.project.id as string };
+}
+
+export const claimBody = (over: Record<string, unknown> = {}) => ({
+  repo: REPO,
+  worktree: '/work/widgets',
+  branch: 'feature/one',
+  session: 's1',
+  ...over,
+});
+
+export async function newCard(c: Caller, over: Record<string, unknown> = {}): Promise<Record<string, any>> {
+  const out = await c.post('/cards', { repo: REPO, title: 'A card', ...over });
+  if (out.status !== 201 && out.status !== 200) throw new Error(`card failed: ${JSON.stringify(out.body)}`);
+  return out.body.card as Record<string, any>;
+}
