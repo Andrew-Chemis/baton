@@ -46,10 +46,12 @@ function describeEvent(e: EventView): string {
 
 export function Drawer(props: { cardId: string; onClose: () => void; onChanged: () => void }) {
   const { cardId } = props;
+  // The id comes from the address bar, so it goes into the request path escaped.
+  const cardPath = `/cards/${encodeURIComponent(cardId)}`;
   const detail = usePoll<Detail>(async () => {
     const [{ card }, { events }] = await Promise.all([
-      api.get<{ card: CardView }>(`/cards/${cardId}`),
-      api.get<{ events: EventView[] }>(`/cards/${cardId}/events`),
+      api.get<{ card: CardView }>(cardPath),
+      api.get<{ events: EventView[] }>(`${cardPath}/events`),
     ]);
     return { card, events };
   }, cardId);

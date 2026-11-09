@@ -303,6 +303,15 @@ describe('board', () => {
     expect(calls.find((c) => c.path.endsWith('/move'))?.body).toEqual({ to: 'ready' });
   });
 
+  test('a card id taken from the address is escaped in the request paths', async () => {
+    const calls = stubApi(routes());
+    await mount(<Board projectId="widgets" route={route('card=a%2Fb%3Fx')} />);
+    await until(() => calls.some((c) => c.path.endsWith('/events')), 'the drawer requests');
+    const paths = calls.map((c) => c.path);
+    expect(paths).toContain('/api/human/cards/a%2Fb%3Fx');
+    expect(paths).toContain('/api/human/cards/a%2Fb%3Fx/events');
+  });
+
   test('says so when the project does not exist', async () => {
     stubApi({ 'GET /projects': { projects: [] }, 'GET /cards?project=widgets': { cards: [] } });
     const root = await mount(<Board projectId="widgets" route={route()} />);
