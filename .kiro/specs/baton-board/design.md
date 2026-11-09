@@ -206,10 +206,10 @@ before any `pass`, `drop` when stopping early, or let the stop hook drop with
 ## Packages
 
 `@andrewchemis/baton-cdk` exports `BatonBoard`, a construct that owns the
-table, user pool, HTTP API, Lambda and SPA bucket, and `BatonDistribution`,
-the CloudFront piece, so a consumer can place the edge in its certificate
-stack the way tributary does (the bucket and API URL cross regions through
-`crossRegionReferences`, as tributary's do). Props: `domainName`, `certificate`,
+table, user pool, HTTP API, Lambda and SPA bucket and, when given a
+certificate and a zone, the CloudFront edge, built by `BatonDistribution`.
+`BatonDistribution` is exported for a stack that already has a bucket and an
+API, and it must share a stack with that bucket (Deviation 13). Props: `domainName`, `certificate`,
 `hostedZone`, `leaseMinutes`, `heartbeatSeconds`, `protectData`,
 `flatRatePlan?`. The tarball carries `lib/` (compiled construct),
 `assets/api/index.js` (esbuild bundle of the Lambda, one file) and
@@ -256,9 +256,11 @@ account-specific-string check, tests, pack test.
 
 `andrewchemis.dev/apps/baton`: a `CdkPipelinesTemplateProject` on
 tributary's layout with `@andrewchemis/baton-cdk` in `deps`. Its
-`CertificateStack` (us-east-1) holds the delegated zone, certificate, web
-ACL and `BatonDistribution`; its app stack (us-west-2) holds `BatonBoard`.
-Config in its `app-config.ts`, deploy through `HardenedGitHubWorkflow` and
+`CertificateStack` (us-east-1) holds the delegated zone, certificate and web
+ACL; its app stack (us-west-2, `crossRegionReferences: true`) holds
+`BatonBoard`, to which it passes `certificate`, `hostedZone` and, for the
+flat-rate plan, `flatRatePlan` with the web ACL's ARN. `BatonBoard` builds the
+distribution in the app stack, next to the bucket. Config in its `app-config.ts`, deploy through `HardenedGitHubWorkflow` and
 the landing-zone role, table and pool retained with deletion protection. A
 synth test asserts the two asset paths exist in the installed package, so a
 broken tarball fails the consumer's CI rather than its deploy (Req 9.6).
@@ -465,6 +467,16 @@ Where the build differs from the text above. None changes a requirement.
     Local with the built web app and no sign-in (every request is made by a
     fixed test user), with `--seed` for a demo board in every card state. It is
     for trying the app and for the browser check; it is not shipped.
+13. **The distribution sits with the bucket, not in the certificate stack.**
+    The first plan put `BatonDistribution` in the us-east-1 certificate stack,
+    as tributary does with its edge. That cannot synthesise here: the bucket
+    policy that admits the distribution (Origin Access Control) names the
+    distribution, and the distribution names the bucket, so the stack holding
+    the bucket and the stack holding the edge each depend on the other and
+    synthesis fails with "BoardStack depends on EdgeStack ... would create a
+    cyclic reference". `BatonBoard` therefore builds the distribution in its
+    own stack; only the certificate, the zone and the web ACL's ARN cross
+    from us-east-1, through `crossRegionReferences`.
 
 ## Advisor review rubric
 

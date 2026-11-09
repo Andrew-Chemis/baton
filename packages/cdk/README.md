@@ -21,7 +21,12 @@ Without a certificate and a hosted zone the board is the table, the user pool, t
 bucket for the web app. Give `certificate` (in us-east-1) and `hostedZone` together to add the CloudFront edge that serves the
 web app on `/*` and the API on `/api/*` under one name. `flatRatePlan` puts that distribution on a CloudFront flat-rate plan.
 
-`BatonDistribution` is the CloudFront piece on its own, for a stack that already has a bucket and an API.
+A certificate for CloudFront has to be in us-east-1, so keep it, the zone and any flat-rate web ACL in a small stack there, set
+`crossRegionReferences: true` on both stacks, and pass `certificate` and `hostedZone` to `BatonBoard` in your app stack.
+`BatonBoard` builds the distribution in its own stack, beside the bucket.
+
+`BatonDistribution` is the CloudFront piece on its own, for a stack that already has a bucket and an API. Put it in the
+bucket's stack: the bucket policy and the distribution refer to each other, so in two stacks they would form a cycle.
 
 ## What it creates
 
