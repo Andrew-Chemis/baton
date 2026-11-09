@@ -1,9 +1,9 @@
-// Builds both packages from clean and packs them the way npm will see them: pnpm applies each `files` allowlist and
-// `publishConfig`. test/pack.test.ts installs these tarballs, and the release workflow publishes tarballs this script builds
-// the same way, from the same commit.
+// Builds both packages (each build script empties its own output first) and packs them the way npm will see them: pnpm applies
+// each `files` allowlist and `publishConfig`. test/pack.test.ts installs these tarballs, and the release workflow publishes
+// tarballs this script builds the same way, from the same commit.
 //   node scripts/pack.ts <dest-dir>     prints "name@version<TAB>tarball", one per line, in publish order
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, rmSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 export const root = resolve(import.meta.dirname, '..');
@@ -18,13 +18,6 @@ export interface Packed {
 }
 
 export function packAll(dest: string): Packed[] {
-  // Clean first, so a file deleted from src/ cannot survive in lib/ or dist/ and ship.
-  for (const [p, dirs] of [
-    ['cdk', ['lib', 'assets/api', 'assets/web']],
-    ['cli', ['dist']],
-  ] as const) {
-    for (const dir of dirs) rmSync(join(root, 'packages', p, dir), { recursive: true, force: true });
-  }
   // Build output goes to stderr: stdout carries the list of tarballs.
   execFileSync('pnpm', ['run', '--silent', 'build'], { cwd: root, stdio: ['ignore', process.stderr, process.stderr] });
   mkdirSync(dest, { recursive: true });
