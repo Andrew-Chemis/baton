@@ -24,6 +24,9 @@ const ERROR_STATUS: Record<ErrorCode, number> = {
   internal: 500,
 };
 
+/** Every code the API can answer with. */
+export const ERROR_CODES = Object.keys(ERROR_STATUS) as ErrorCode[];
+
 export class ApiError extends Error {
   readonly status: number;
   readonly body: ApiErrorBody;

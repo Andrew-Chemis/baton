@@ -1,0 +1,840 @@
+openapi: 3.1.0
+info:
+  title: Baton board API
+  version: 0.x
+  summary: The agent-first work board's HTTP API.
+  description: |
+    Two prefixes, one per kind of caller. People call `/api/human/*` with a Cognito ID token; agents call `/api/agent/*`
+    with a `baton_…` bearer token. Each operation lists the prefixes it is served under.
+
+    Every write accepts an `Idempotency-Key` header. Repeating a write with the same key and the same body returns the first
+    answer with `idempotent-replayed: true`; the same key with a different body is `idempotent_replay` (422). Keys last 24
+    hours.
+
+    Every error is an `Error` object whose `message` says what to do next. Times are epoch milliseconds.
+
+    `test/contract.test.ts` checks this document against the router's route table and validates real responses against
+    these schemas, so it cannot drift from the code silently.
+  license:
+    name: MIT
+    identifier: MIT
+
+x-servers:
+  both: &both
+    - url: /api/human
+      description: People, with a Cognito ID token
+    - url: /api/agent
+      description: Agents, with a bearer token
+  human: &human
+    - url: /api/human
+      description: People, with a Cognito ID token
+  agent: &agent
+    - url: /api/agent
+      description: Agents, with a bearer token
+
+security:
+  - cognito: []
+  - agentToken: []
+
+tags:
+  - name: board
+  - name: projects
+  - name: cards
+  - name: claims
+    description: Agent-only. A claim is a lease on a card, renewed by heartbeats.
+  - name: agents
+    description: Admin-only. Agent identities and their tokens.
+
+paths:
+  /config:
+    get:
+      tags: [board]
+      operationId: getConfig
+      servers: *both
+      summary: Lease timing and the board's columns
+      responses:
+        '200':
+          description: The board's timing
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [leaseSeconds, heartbeatSeconds, columns]
+                properties:
+                  leaseSeconds: { type: integer }
+                  heartbeatSeconds: { type: integer }
+                  columns: { type: array, items: { $ref: '#/components/schemas/Column' } }
+        default: { $ref: '#/components/responses/Error' }
+
+  /projects:
+    get:
+      tags: [projects]
+      operationId: listProjects
+      servers: *both
+      summary: Every live project, with counts by state
+      parameters:
+        - { name: repo, in: query, schema: { type: string }, description: Only the project holding this repo }
+        - { name: counts, in: query, schema: { type: string, enum: ['0', '1'] }, description: '`0` leaves counts out' }
+      responses:
+        '200':
+          description: Projects
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [projects]
+                properties:
+                  projects: { type: array, items: { $ref: '#/components/schemas/Project' } }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [projects]
+      operationId: registerProject
+      servers: *both
+      summary: Register a project with its repos, or add repos to the project of that name
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, repos]
+              properties:
+                name: { type: string, maxLength: 80 }
+                repos: { type: array, items: { type: string }, description: 'owner/name, or any git URL of the repo' }
+      responses:
+        '200': { $ref: '#/components/responses/ProjectRegistered' }
+        '201': { $ref: '#/components/responses/ProjectRegistered' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /projects/{id}:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    patch:
+      tags: [projects]
+      operationId: patchProject
+      servers: *both
+      summary: Rename, add repos or remove repos
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                addRepos: { type: array, items: { type: string } }
+                removeRepos: { type: array, items: { type: string } }
+      responses:
+        '200': { $ref: '#/components/responses/OneProject' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /projects/{id}/archive:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    post:
+      tags: [projects]
+      operationId: archiveProject
+      servers: *both
+      summary: Archive a project and free its repos; refused while any card is claimed
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      responses:
+        '200': { $ref: '#/components/responses/OneProject' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /cards:
+    get:
+      tags: [cards]
+      operationId: listCards
+      servers: *both
+      summary: A board, a repo's cards, one card by key, or (agents) the cards that need you
+      description: Pass exactly one of `project`, `repo`, `key` or `attention=me`.
+      parameters:
+        - { name: project, in: query, schema: { type: string } }
+        - { name: repo, in: query, schema: { type: string } }
+        - { name: key, in: query, schema: { type: string }, description: 'owner/name/slug' }
+        - { name: column, in: query, schema: { $ref: '#/components/schemas/Column' } }
+        - { name: archived, in: query, schema: { type: string, enum: ['1', 'true'] } }
+        - { name: attention, in: query, schema: { type: string, enum: [me] }, description: Agents only }
+      responses:
+        '200':
+          description: Cards in board order, without bodies
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [cards]
+                properties:
+                  cards: { type: array, items: { $ref: '#/components/schemas/Card' } }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [cards]
+      operationId: createCard
+      servers: *both
+      summary: Create a card; its project comes from the repo, and a `key` already used returns that card
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [repo, title]
+              properties:
+                repo: { type: string }
+                title: { type: string, maxLength: 200 }
+                body: { type: string, maxLength: 20000 }
+                column: { $ref: '#/components/schemas/Column' }
+                key: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,63}$' }
+                links: { type: array, maxItems: 20, items: { type: string, format: uri } }
+      responses:
+        '200': { $ref: '#/components/responses/CardCreated' }
+        '201': { $ref: '#/components/responses/CardCreated' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /cards/{id}:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    get:
+      tags: [cards]
+      operationId: getCard
+      servers: *both
+      summary: One card, with its body
+      responses:
+        '200': { $ref: '#/components/responses/OneCard' }
+        default: { $ref: '#/components/responses/Error' }
+    patch:
+      tags: [cards]
+      operationId: patchCard
+      servers: *both
+      summary: Edit title, body or links
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: { type: string, maxLength: 200 }
+                body: { type: string, maxLength: 20000 }
+                links: { type: array, items: { type: string } }
+      responses:
+        '200': { $ref: '#/components/responses/OneCard' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /cards/{id}/move:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    post:
+      tags: [cards]
+      operationId: moveCard
+      servers: *both
+      summary: Move a card; a person moving it back marks it reopened, an agent may not move it into review past unread comments
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to]
+              properties:
+                to: { $ref: '#/components/schemas/Column' }
+                pos: { type: string, description: A position from another card, or omitted for the end of the column }
+                worktree: { type: string, description: 'Agents: the checkout that holds the claim' }
+      responses:
+        '200': { $ref: '#/components/responses/OneCard' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /cards/{id}/comments:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    post:
+      tags: [cards]
+      operationId: commentCard
+      servers: *both
+      summary: Comment on a card
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: { type: string, maxLength: 10000 }
+      responses:
+        '201':
+          description: The card and the comment's event
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [card, event]
+                properties:
+                  card: { $ref: '#/components/schemas/Card' }
+                  event: { $ref: '#/components/schemas/Event' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /cards/{id}/events:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    get:
+      tags: [cards]
+      operationId: listEvents
+      servers: *both
+      summary: Events after `since`, at most 200 a page
+      parameters:
+        - { name: since, in: query, schema: { type: integer, minimum: 0 } }
+      responses:
+        '200':
+          description: |
+            A page of events. While `more` is true, `seq` is the last event returned: pass it as `since`. Once `more` is
+            false, `seq` is the card's sequence.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [events, seq, more]
+                properties:
+                  events: { type: array, items: { $ref: '#/components/schemas/Event' } }
+                  seq: { type: integer }
+                  more: { type: boolean }
+        default: { $ref: '#/components/responses/Error' }
+
+  /cards/{id}/claim:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    post:
+      tags: [claims]
+      operationId: claimCard
+      servers: *agent
+      summary: Take a card; a second agent gets claim_held with the holder, a stale claim is taken over
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [repo, worktree, branch]
+              properties:
+                repo: { type: string }
+                worktree: { type: string, maxLength: 500 }
+                branch: { type: string, maxLength: 255 }
+                session: { type: string, maxLength: 200 }
+                to: { $ref: '#/components/schemas/Column' }
+      responses:
+        '200':
+          description: The claim
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [card, warnings, pending, alreadyHeld, leaseSeconds, heartbeatSeconds]
+                properties:
+                  card: { $ref: '#/components/schemas/Card' }
+                  warnings:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [code, message, card]
+                      properties:
+                        code: { const: branch_reused }
+                        message: { type: string }
+                        card:
+                          type: object
+                          additionalProperties: false
+                          required: [id, title, key]
+                          properties:
+                            id: { type: string }
+                            title: { type: string }
+                            key: { type: [string, 'null'] }
+                  pending: { type: array, items: { $ref: '#/components/schemas/Event' } }
+                  alreadyHeld: { type: boolean }
+                  leaseSeconds: { type: integer }
+                  heartbeatSeconds: { type: integer }
+        default: { $ref: '#/components/responses/Error' }
+
+  /cards/{id}/heartbeat:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    post:
+      tags: [claims]
+      operationId: heartbeatCard
+      servers: *agent
+      summary: Extend the lease; writes no event
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [worktree]
+              properties:
+                worktree: { type: string }
+                branch: { type: string }
+                session: { type: string }
+      responses:
+        '200':
+          description: The card without its body, and the timing
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [card, leaseSeconds, heartbeatSeconds]
+                properties:
+                  card: { $ref: '#/components/schemas/Card' }
+                  leaseSeconds: { type: integer }
+                  heartbeatSeconds: { type: integer }
+        default: { $ref: '#/components/responses/Error' }
+
+  /cards/{id}/ack:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    post:
+      tags: [claims]
+      operationId: ackCard
+      servers: *agent
+      summary: Acknowledge the events up to `seq`
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [seq]
+              properties:
+                seq: { type: integer, minimum: 0 }
+      responses:
+        '200': { $ref: '#/components/responses/OneCard' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /cards/{id}/release:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    post:
+      tags: [claims]
+      operationId: releaseCard
+      servers: *agent
+      summary: Release a claim, optionally moving the card and leaving a comment
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [worktree, reason]
+              properties:
+                worktree: { type: string }
+                reason: { type: string, enum: [done, paused, blocked, session_ended] }
+                to: { $ref: '#/components/schemas/Column' }
+                pos: { type: string }
+                comment: { type: string, maxLength: 10000 }
+      responses:
+        '200': { $ref: '#/components/responses/OneCard' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /cards/{id}/archive:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    post:
+      tags: [cards]
+      operationId: archiveCard
+      servers: *human
+      summary: Hide a card from the board, ending any claim
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      responses:
+        '200': { $ref: '#/components/responses/OneCard' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /agents:
+    get:
+      tags: [agents]
+      operationId: listAgents
+      servers: *human
+      summary: Agent identities and their tokens (never the secrets)
+      responses:
+        '200':
+          description: Agents
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [agents]
+                properties:
+                  agents: { type: array, items: { $ref: '#/components/schemas/Agent' } }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [agents]
+      operationId: createAgent
+      servers: *human
+      summary: Create an agent identity
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, maxLength: 64 }
+      responses:
+        '201':
+          description: The agent
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [agent]
+                properties:
+                  agent: { $ref: '#/components/schemas/Agent' }
+        default: { $ref: '#/components/responses/Error' }
+
+  /agents/{id}:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    delete:
+      tags: [agents]
+      operationId: deleteAgent
+      servers: *human
+      summary: Delete an agent and revoke its tokens
+      responses:
+        '200':
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [deleted, revokedTokens]
+                properties:
+                  deleted: { type: string }
+                  revokedTokens: { type: integer }
+        default: { $ref: '#/components/responses/Error' }
+
+  /agents/{id}/tokens:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    post:
+      tags: [agents]
+      operationId: createToken
+      servers: *human
+      summary: Issue a token; it is shown in this answer only
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                label: { type: string, maxLength: 80 }
+                expiresInDays: { type: integer, minimum: 1, maximum: 365, default: 90 }
+      responses:
+        '201':
+          description: The token. A replay of this request answers with `token` null.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [token, tokenId, label, agentId, expiresAt, note]
+                properties:
+                  token: { type: [string, 'null'], pattern: '^baton_' }
+                  tokenId: { type: string }
+                  label: { type: string }
+                  agentId: { type: string }
+                  expiresAt: { type: integer }
+                  note: { type: string }
+        default: { $ref: '#/components/responses/Error' }
+
+  /agents/{id}/tokens/{tokenId}:
+    parameters:
+      - { $ref: '#/components/parameters/Id' }
+      - { name: tokenId, in: path, required: true, schema: { type: string } }
+    delete:
+      tags: [agents]
+      operationId: revokeToken
+      servers: *human
+      summary: Revoke a token; it stops working within five minutes
+      responses:
+        '200':
+          description: Revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [revoked]
+                properties:
+                  revoked: { type: string }
+        default: { $ref: '#/components/responses/Error' }
+
+components:
+  securitySchemes:
+    cognito:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: A Cognito ID token from the board's hosted UI. Agent management also needs the admin group.
+    agentToken:
+      type: http
+      scheme: bearer
+      description: A `baton_…` token from the Agents page.
+
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      schema: { type: string, maxLength: 200 }
+
+  responses:
+    Error:
+      description: A refusal or a failure, with what to do next
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    OneCard:
+      description: The card as it is now
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [card]
+            properties:
+              card: { $ref: '#/components/schemas/Card' }
+    CardCreated:
+      description: The card; `created` is false when the key already named one
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [card, created]
+            properties:
+              card: { $ref: '#/components/schemas/Card' }
+              created: { type: boolean }
+    OneProject:
+      description: The project
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [project]
+            properties:
+              project: { $ref: '#/components/schemas/Project' }
+    ProjectRegistered:
+      description: The project, whether it was created, and the repos this call added
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [project, created, added]
+            properties:
+              project: { $ref: '#/components/schemas/Project' }
+              created: { type: boolean }
+              added: { type: array, items: { type: string } }
+
+  schemas:
+    Column:
+      type: string
+      enum: [backlog, ready, in_progress, in_review, done, blocked]
+
+    ErrorCode:
+      type: string
+      enum:
+        - claim_held
+        - not_holder
+        - seq_ahead
+        - unacked_comments
+        - missing_worktree
+        - repo_mismatch
+        - token_revoked
+        - token_expired
+        - payload_too_large
+        - idempotent_replay
+        - repo_unregistered
+        - repo_taken
+        - name_taken
+        - project_has_claims
+        - invalid_request
+        - not_found
+        - unauthorized
+        - forbidden
+        - conflict
+        - internal
+
+    Error:
+      type: object
+      additionalProperties: false
+      required: [code, message]
+      properties:
+        code: { $ref: '#/components/schemas/ErrorCode' }
+        message: { type: string }
+        card: { $ref: '#/components/schemas/Card' }
+        claim: { $ref: '#/components/schemas/Claim' }
+        seq: { type: integer }
+        project:
+          type: object
+          required: [id, name]
+          properties:
+            id: { type: string }
+            name: { type: string }
+
+    Actor:
+      type: object
+      additionalProperties: false
+      required: [kind, id]
+      properties:
+        kind: { type: string, enum: [human, agent] }
+        id: { type: string }
+
+    Claim:
+      type: object
+      additionalProperties: false
+      required: [agentId, repo, worktree, branch, session, claimedAt, heartbeatAt, leaseUntil, stale]
+      properties:
+        agentId: { type: string }
+        repo: { type: string }
+        worktree: { type: string }
+        branch: { type: string }
+        session: { type: [string, 'null'] }
+        claimedAt: { type: integer }
+        heartbeatAt: { type: integer }
+        leaseUntil: { type: integer }
+        stale: { type: boolean }
+
+    LastClaim:
+      type: object
+      additionalProperties: false
+      required: [agentId, repo, worktree, branch, session, endedAt, endedBy, reason]
+      properties:
+        agentId: { type: string }
+        repo: { type: string }
+        worktree: { type: string }
+        branch: { type: string }
+        session: { type: [string, 'null'] }
+        endedAt: { type: integer }
+        endedBy: { type: string, enum: [released, taken_over, human_done, archived] }
+        reason: { type: [string, 'null'] }
+
+    Card:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - projectId
+        - key
+        - title
+        - repo
+        - column
+        - pos
+        - seq
+        - lastHumanSeq
+        - lastAgentId
+        - ackedSeq
+        - reopened
+        - archived
+        - links
+        - claim
+        - lastClaim
+        - state
+        - unread
+        - createdAt
+        - updatedAt
+      properties:
+        id: { type: string }
+        projectId: { type: string }
+        key: { type: [string, 'null'], description: 'owner/name/slug' }
+        title: { type: string }
+        body: { type: string, description: Present on a single card, left out of listings }
+        repo: { type: string }
+        column: { $ref: '#/components/schemas/Column' }
+        pos: { type: string }
+        seq: { type: integer }
+        lastHumanSeq: { type: integer }
+        lastAgentId: { type: [string, 'null'] }
+        ackedSeq: { type: integer }
+        reopened: { type: boolean }
+        archived: { type: boolean }
+        links: { type: array, items: { type: string } }
+        claim:
+          oneOf:
+            - { $ref: '#/components/schemas/Claim' }
+            - { type: 'null' }
+        lastClaim:
+          oneOf:
+            - { $ref: '#/components/schemas/LastClaim' }
+            - { type: 'null' }
+        state: { type: string, enum: [claimed, stale, unowned, unclaimed] }
+        unread: { type: boolean }
+        createdAt: { type: integer }
+        updatedAt: { type: integer }
+
+    Event:
+      type: object
+      additionalProperties: false
+      required: [seq, at, actor, type, payload]
+      properties:
+        seq: { type: integer }
+        at: { type: integer }
+        actor: { $ref: '#/components/schemas/Actor' }
+        type: { type: string, enum: [created, edited, moved, commented, claimed, taken_over, released] }
+        payload: { type: object }
+
+    ProjectCounts:
+      type: object
+      additionalProperties: false
+      required: [total, claimed, stale, unowned, reopened, unread, inReview]
+      properties:
+        total: { type: integer }
+        claimed: { type: integer }
+        stale: { type: integer }
+        unowned: { type: integer }
+        reopened: { type: integer }
+        unread: { type: integer }
+        inReview: { type: integer }
+
+    Project:
+      type: object
+      additionalProperties: false
+      required: [id, name, repos, archived, lastEventAt, createdAt]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        repos: { type: array, items: { type: string } }
+        archived: { type: boolean }
+        lastEventAt: { type: integer }
+        createdAt: { type: integer }
+        counts: { $ref: '#/components/schemas/ProjectCounts' }
+
+    AgentToken:
+      type: object
+      additionalProperties: false
+      required: [tokenId, label, createdAt, expiresAt]
+      properties:
+        tokenId: { type: string }
+        label: { type: string }
+        createdAt: { type: integer }
+        expiresAt: { type: [integer, 'null'] }
+
+    Agent:
+      type: object
+      additionalProperties: false
+      required: [id, name, createdAt, tokens]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        createdAt: { type: integer }
+        tokens: { type: array, items: { $ref: '#/components/schemas/AgentToken' } }

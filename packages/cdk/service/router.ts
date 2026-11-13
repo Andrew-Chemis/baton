@@ -48,7 +48,7 @@ interface Call {
 }
 
 /** `admin` is a person in the board's admin group: agent and token management is theirs alone. */
-type Who = ActorKind | 'both' | 'admin';
+export type Who = ActorKind | 'both' | 'admin';
 interface Route {
   /** `METHOD /path/:param`, as logged. */
   name: string;
@@ -120,6 +120,13 @@ const ROUTES: Route[] = [
     revokeToken(deps, ctx, params.id as string, params.tokenId as string),
   ),
 ];
+
+/** Every route as the API document names it: `{id}` for a parameter, relative to the caller's prefix. */
+export const ROUTE_TABLE: { method: string; path: string; who: Who }[] = ROUTES.map((r) => ({
+  method: r.method,
+  path: `/${r.segments.map((s) => (s.startsWith(':') ? `{${s.slice(1)}}` : s)).join('/')}`,
+  who: r.who,
+}));
 
 /** A path segment with its %-escapes undone; a stray % is the caller's mistake, not the board's. */
 function decodeSegment(segment: string): string {
