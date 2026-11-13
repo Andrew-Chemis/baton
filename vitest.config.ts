@@ -1,7 +1,8 @@
 import { defineConfig } from 'vitest/config';
 
 // One config for the workspace; each project names its own files, environment and global setup. `test` runs every project
-// except `pack` (it builds both packages and installs them with npm); `test:pack` runs that one.
+// except `pack` (it builds both packages and installs them with npm) and `e2e` (it drives Chromium); `test:pack` and
+// `test:e2e` run those.
 export default defineConfig({
   test: {
     projects: [
@@ -51,6 +52,22 @@ export default defineConfig({
           exclude: ['test/pack.test.ts'],
           environment: 'node',
           testTimeout: 30_000,
+        },
+      },
+      {
+        test: {
+          name: 'e2e',
+          include: ['packages/cdk/test/e2e/**/*.test.ts'],
+          environment: 'node',
+          globalSetup: [
+            'packages/cdk/test/support/dynamodb-global-setup.ts',
+            'packages/cdk/test/support/build-assets-global-setup.ts',
+          ],
+          // The steps share one page, in order.
+          sequence: { concurrent: false },
+          fileParallelism: false,
+          testTimeout: 60_000,
+          hookTimeout: 180_000,
         },
       },
       {

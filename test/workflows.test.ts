@@ -227,6 +227,14 @@ describe('ci.yml', () => {
     }
   });
 
+  test('drives the web app in a browser, in a job of its own with read access only', () => {
+    const e2e = workflow('ci.yml').jobs.e2e as Job;
+    expect(e2e.permissions).toEqual({ contents: 'read' });
+    const commands = e2e.steps.map((s) => s.run ?? '');
+    expect(commands).toContain('pnpm test:e2e');
+    expect(commands.some((c) => c.includes('playwright-core install'))).toBe(true);
+  });
+
   test('validates commit messages on a pull request', () => {
     const step = job.steps.find((s) => s.run?.includes('commitlint'));
     expect(step?.if).toContain('pull_request');
