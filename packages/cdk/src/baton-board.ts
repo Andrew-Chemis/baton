@@ -1,4 +1,4 @@
-import { Aws, CfnOutput, Duration, Fn, RemovalPolicy, Stack } from 'aws-cdk-lib';
+import { Aws, CfnOutput, CustomResource, Duration, Fn, RemovalPolicy, Stack } from 'aws-cdk-lib';
 import { CfnStage, HttpApi, HttpMethod } from 'aws-cdk-lib/aws-apigatewayv2';
 import {
   HttpJwtAuthorizer,
@@ -14,6 +14,7 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import type { IHostedZone } from 'aws-cdk-lib/aws-route53';
 import * as s3 from 'aws-cdk-lib/aws-s3';
+import { Provider } from 'aws-cdk-lib/custom-resources';
 import { Construct } from 'constructs';
 import { API_ASSET_PATH } from './assets.js';
 import { BatonDistribution, type FlatRatePlan } from './baton-distribution.js';
@@ -34,6 +35,7 @@ import {
   TTL_ATTRIBUTE,
   timingProblem,
 } from './schema.js';
+import { LATEST_SCHEMA } from './schema-version.js';
 
 export interface BatonBoardProps {
   /** The name the board is served on, e.g. baton.example.com. It is also the Cognito callback origin. */
@@ -85,6 +87,8 @@ export class BatonBoard extends Construct {
   public readonly edge?: BatonDistribution;
   /** Set when `monitoring` was given. */
   public readonly monitoring?: BatonMonitoring;
+  /** Runs the data migrations on every deploy that brings a new schema version. */
+  public readonly migrationFunction: lambda.Function;
   /** The function's log: one JSON line per request (see the README's Operations section). */
   public readonly logGroup: LogGroup;
   /** API Gateway's access log, which also records the requests an authorizer refused before the function ran. */
@@ -212,6 +216,38 @@ export class BatonBoard extends Construct {
         resources: [this.table.tableArn, `${this.table.tableArn}/index/*`],
       }),
     );
+
+    // The same bundle with a second entry point brings the table to the schema this version of the code expects. It runs on
+    // the deploy that changes `SchemaVersion`, before CloudFormation finishes; a failure fails the deploy, and the next one
+    // resumes at the migration that failed. It alone may Scan, and it has the time a scan of a large table needs.
+    this.migrationFunction = new lambda.Function(this, 'Migrate', {
+      description: 'Baton board data migrations',
+      runtime: lambda.Runtime.NODEJS_24_X,
+      architecture: lambda.Architecture.ARM_64,
+      handler: 'index.migrate',
+      code: lambda.Code.fromAsset(API_ASSET_PATH),
+      memorySize: 256,
+      timeout: Duration.minutes(14),
+      logGroup,
+      loggingFormat: lambda.LoggingFormat.JSON,
+      environment: { BATON_TABLE: this.table.tableName },
+    });
+    this.migrationFunction.addToRolePolicy(
+      new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: ['dynamodb:GetItem', 'dynamodb:Scan', 'dynamodb:UpdateItem'],
+        resources: [this.table.tableArn],
+      }),
+    );
+    const migrations = new Provider(this, 'MigrationProvider', {
+      onEventHandler: this.migrationFunction,
+      logGroup: new LogGroup(this, 'MigrationProviderLogs', { retention, removalPolicy: RemovalPolicy.DESTROY }),
+    });
+    new CustomResource(this, 'Schema', {
+      serviceToken: migrations.serviceToken,
+      resourceType: 'Custom::BatonSchema',
+      properties: { SchemaVersion: String(LATEST_SCHEMA) },
+    });
 
     this.api = new HttpApi(this, 'HttpApi', {
       apiName: `${prefix}-api`,
