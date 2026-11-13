@@ -9,12 +9,19 @@ import {
   type HttpResult,
   type AuthorizerResult,
 } from './router.ts';
+import { METRICS_ENV } from '../src/schema.ts';
 import { createDocClient, type Deps } from './store.ts';
+import { createTelemetry } from './telemetry.ts';
 
 let cached: Deps | undefined;
 
 function deps(): Deps {
-  cached ??= { db: createDocClient(), config: configFromEnv(), now: Date.now };
+  cached ??= {
+    db: createDocClient(),
+    config: configFromEnv(),
+    now: Date.now,
+    telemetry: createTelemetry({ metrics: process.env[METRICS_ENV] === '1' }),
+  };
   return cached;
 }
 

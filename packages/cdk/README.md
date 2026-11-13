@@ -36,8 +36,29 @@ bucket's stack: the bucket policy and the distribution refer to each other, so i
   One Lambda serves both.
 - An S3 bucket and, with a certificate and a zone, a CloudFront distribution with Origin Access Control.
 
+- Two log groups, kept a month by default (`logRetention`): the function's JSON log, one line per request, and API
+  Gateway's access log, which also records requests an authorizer turned away.
+
 Nothing is created that bills while idle: no provisioned capacity, no customer-managed key, no Secrets Manager secret, no
-NAT gateway.
+NAT gateway, no alarm, no dashboard.
+
+## Monitoring
+
+Each of these has a standing monthly charge, so each is opt-in.
+
+```ts
+new BatonBoard(stack, 'Board', {
+  domainName: 'baton.example.com',
+  metrics: true, // ClaimGranted, ClaimRefused, ClaimTakenOver, ServerError in namespace Baton
+  monitoring: { alarmTopic: topic, dashboard: true },
+});
+```
+
+`monitoring` creates six alarms that notify `alarmTopic` on ALARM and OK: API 5xx answers, function crashes or timeouts,
+function throttles, p99 latency (`latencyP99Ms`, default 3000), and DynamoDB throttles and system errors on the table.
+`dashboard: true` adds a CloudWatch dashboard with requests, latency, the function, the table, the claim metrics when
+`metrics` is on, and a Logs Insights table of refusals by route and code. `board.monitoring.alarms` exposes the alarms for a
+composite alarm or another action.
 
 The stack outputs the board URL, the table name, the API endpoint and the user pool id. Create the first person in that user
 pool, sign in, and register agents and projects from the board.

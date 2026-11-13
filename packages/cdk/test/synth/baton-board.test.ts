@@ -4,6 +4,7 @@ import { App, Stack } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
 import { Certificate } from 'aws-cdk-lib/aws-certificatemanager';
 import { PublicHostedZone } from 'aws-cdk-lib/aws-route53';
+import { Topic } from 'aws-cdk-lib/aws-sns';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { runInNewContext } from 'node:vm';
@@ -140,6 +141,8 @@ describe('synthesis', () => {
       'AWS::KMS::Key',
       'AWS::KMS::Alias',
       'AWS::ApplicationAutoScaling::ScalableTarget',
+      'AWS::CloudWatch::Alarm',
+      'AWS::CloudWatch::Dashboard',
     ]) {
       template.resourceCountIs(type, 0);
     }
@@ -293,5 +296,47 @@ describe('options', () => {
     expect(
       () => new BatonBoard(stack, 'B', { domainName: 'x.example.test', leaseMinutes: 1, heartbeatSeconds: 60 }),
     ).toThrow(/shorter than the lease/);
+  });
+
+  test('observability: JSON function logs, an access log with no headers or query, and no metrics unless asked', () => {
+    const { template } = synth();
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Handler: 'index.handler',
+      LoggingConfig: Match.objectLike({ LogFormat: 'JSON', ApplicationLogLevel: 'INFO' }),
+      Environment: { Variables: Match.not(Match.objectLike({ BATON_METRICS: Match.anyValue() })) },
+    });
+    const stage = Object.values(template.findResources('AWS::ApiGatewayV2::Stage'))[0] as any;
+    const format = JSON.parse(stage.Properties.AccessLogSettings.Format as string);
+    expect(Object.keys(format)).toEqual(
+      expect.arrayContaining(['requestId', 'routeKey', 'status', 'authorizerError', 'latencyMs']),
+    );
+    expect(JSON.stringify(format)).not.toMatch(/header|querystring|body/i);
+    template.resourceCountIs('AWS::Logs::LogGroup', 2);
+    template.allResourcesProperties('AWS::Logs::LogGroup', { RetentionInDays: 30 });
+  });
+
+  test('monitoring: six alarms that notify the topic, a dashboard when asked, and metrics on the Lambda', () => {
+    const app = new App();
+    const stack = new Stack(app, 'S', { env: { account: '123456789012', region: 'us-west-2' } });
+    const topic = new Topic(stack, 'Alerts');
+    new BatonBoard(stack, 'B', {
+      domainName: 'x.example.test',
+      metrics: true,
+      monitoring: { alarmTopic: topic, dashboard: true },
+    });
+    const template = Template.fromStack(stack);
+    template.resourceCountIs('AWS::CloudWatch::Alarm', 6);
+    template.allResourcesProperties('AWS::CloudWatch::Alarm', {
+      AlarmActions: [{ Ref: Match.stringLikeRegexp('^Alerts') }],
+      OKActions: [{ Ref: Match.stringLikeRegexp('^Alerts') }],
+      TreatMissingData: 'notBreaching',
+    });
+    template.resourceCountIs('AWS::CloudWatch::Dashboard', 1);
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Handler: 'index.handler',
+      Environment: { Variables: Match.objectLike({ BATON_METRICS: '1' }) },
+    });
+    const body = JSON.stringify(Object.values(template.findResources('AWS::CloudWatch::Dashboard'))[0]);
+    expect(body).toContain('ClaimTakenOver');
   });
 });

@@ -14,6 +14,7 @@ import { idempotencyOf, type Reply, type RequestCtx } from './engine.ts';
 import { ApiError, badRequest, forbidden, notFound, unauthorized } from './errors.ts';
 import { archiveProject, listProjects, patchProject, registerProject } from './projects.ts';
 import type { Deps } from './store.ts';
+import { metricsOf } from './telemetry.ts';
 
 export interface HttpEvent {
   rawPath: string;
@@ -22,6 +23,8 @@ export interface HttpEvent {
   body?: string | undefined;
   isBase64Encoded?: boolean;
   requestContext: {
+    /** API Gateway's id for the request; it is also in the access log, so one id finds both lines. */
+    requestId?: string;
     http: { method: string };
     authorizer?: {
       jwt?: { claims?: Record<string, unknown> };
@@ -46,6 +49,8 @@ interface Call {
 
 type Who = ActorKind | 'both';
 interface Route {
+  /** `METHOD /path/:param`, as logged. */
+  name: string;
   method: string;
   segments: string[];
   who: Who;
@@ -61,6 +66,7 @@ const byId =
     fn(deps, ctx, params.id as string, body);
 
 const route = (method: string, path: string, who: Who, run: Route['run']): Route => ({
+  name: `${method} ${path}`,
   method,
   segments: path.split('/').filter(Boolean),
   who,
@@ -181,7 +187,48 @@ function respond(status: number, body: unknown, extra: Record<string, string> = 
   };
 }
 
+/** What the request log records about a request as it goes: filled in by `serve`, read once at the end. */
+interface Trace {
+  route?: string;
+  actor?: Actor;
+}
+
 export async function handleHttp(deps: Deps, event: HttpEvent): Promise<HttpResult> {
+  const started = performance.now();
+  const requestId = event.requestContext.requestId;
+  const trace: Trace = {};
+  const { result, body, replayed } = await serve(deps, event, trace, requestId);
+  if (requestId) result.headers['x-request-id'] = requestId;
+  const code = typeof (body as { code?: unknown }).code === 'string' ? (body as { code: string }).code : undefined;
+  deps.telemetry?.request({
+    requestId,
+    method: event.requestContext.http.method.toUpperCase(),
+    route: trace.route,
+    status: result.statusCode,
+    code: result.statusCode >= 400 ? code : undefined,
+    durationMs: Math.round(performance.now() - started),
+    // A person is logged by their Cognito subject, never their email.
+    actor: trace.actor && {
+      kind: trace.actor.kind,
+      id: trace.actor.kind === 'human' ? subjectOf(event) : trace.actor.id,
+    },
+    // A replay answers with a stored body; counting it again would count one claim twice.
+    metrics: replayed ? [] : metricsOf(trace.route, result.statusCode, code, body),
+  });
+  return result;
+}
+
+const subjectOf = (event: HttpEvent): string => {
+  const sub = event.requestContext.authorizer?.jwt?.claims?.sub;
+  return typeof sub === 'string' ? sub : 'unknown';
+};
+
+async function serve(
+  deps: Deps,
+  event: HttpEvent,
+  trace: Trace,
+  requestId: string | undefined,
+): Promise<{ result: HttpResult; body: unknown; replayed?: boolean }> {
   try {
     const path = event.rawPath;
     const kind = (Object.keys(PREFIX) as ActorKind[]).find((k) => path.startsWith(`${PREFIX[k]}/`));
@@ -190,10 +237,12 @@ export async function handleHttp(deps: Deps, event: HttpEvent): Promise<HttpResu
         `No such path ${path}. The API lives under ${HUMAN_PREFIX}/ (web app) and ${AGENT_PREFIX}/ (agents).`,
       );
     const actor = resolveActor(event, kind);
+    trace.actor = actor;
     const method = event.requestContext.http.method.toUpperCase();
     const segments = path.slice(PREFIX[kind].length).split('/').filter(Boolean);
     const found = match(method, segments);
     if (!found) throw notFound(`No route ${method} ${path}.`);
+    trace.route = found.route.name;
     if (found.route.who !== 'both' && found.route.who !== kind) {
       throw forbidden(
         found.route.who === 'agent'
@@ -214,19 +263,23 @@ export async function handleHttp(deps: Deps, event: HttpEvent): Promise<HttpResu
     const ctx: RequestCtx = { actor, idem: idempotencyOf(method, path, rawBody, header(event, 'idempotency-key')) };
     const query = new URLSearchParams(event.rawQueryString ?? '');
     const reply = await found.route.run({ deps, ctx, params: found.params, query, body });
-    return respond(reply.status, reply.body, reply.replayed ? { 'idempotent-replayed': 'true' } : {});
+    return {
+      result: respond(reply.status, reply.body, reply.replayed ? { 'idempotent-replayed': 'true' } : {}),
+      body: reply.body,
+      replayed: reply.replayed === true,
+    };
   } catch (error) {
-    if (error instanceof ApiError) return respond(error.status, error.body);
-    // Never log bodies or headers: they may carry tokens.
-    console.error(
-      'unhandled error',
-      error instanceof Error ? (error.stack ?? `${error.name}: ${error.message}`) : String(error),
-    );
-    return respond(500, {
+    if (error instanceof ApiError) return { result: respond(error.status, error.body), body: error.body };
+    // Never log bodies or headers: they may carry tokens. `console.error` with the error itself lets the Lambda's JSON log
+    // format record its type and stack as fields.
+    console.error('unhandled error', { requestId, route: trace.route }, error);
+    const body = {
       code: 'internal',
       message:
-        'The board hit an unexpected error. Repeat the request; it is safe to retry with the same Idempotency-Key. If it keeps failing, tell the human.',
-    });
+        'The board hit an unexpected error. Repeat the request; it is safe to retry with the same Idempotency-Key. ' +
+        `If it keeps failing, tell the human${requestId ? ` and quote request ${requestId}` : ''}.`,
+    };
+    return { result: respond(500, body), body };
   }
 }
 
