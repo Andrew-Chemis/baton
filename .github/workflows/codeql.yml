@@ -18,6 +18,9 @@ concurrency:
 
 jobs:
   analyze:
+    # Code scanning on a private repository needs GitHub Advanced Security, which this one does not have. The job skips
+    # while the repository is private and starts on its own once it is public.
+    if: ${{ !github.event.repository.private }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:

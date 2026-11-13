@@ -205,6 +205,12 @@ describe('changelog.yml', () => {
   });
 });
 
+describe('codeql.yml', () => {
+  test('runs only while the repository is public, where code scanning needs no Advanced Security', () => {
+    expect(workflow('codeql.yml').jobs.analyze?.if).toContain('!github.event.repository.private');
+  });
+});
+
 describe('ci.yml', () => {
   const job = workflow('ci.yml').jobs.test as Job;
 

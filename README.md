@@ -5,7 +5,7 @@ read the human's moves and comments back before they call anything done. Many ag
 and a dropped baton always shows.
 
 [![ci](https://github.com/Andrew-Chemis/baton/actions/workflows/ci.yml/badge.svg)](https://github.com/Andrew-Chemis/baton/actions/workflows/ci.yml)
-[![codeql](https://github.com/Andrew-Chemis/baton/actions/workflows/codeql.yml/badge.svg)](https://github.com/Andrew-Chemis/baton/actions/workflows/codeql.yml)
+
 [![licence: MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
 
 ![A project board: claimed, stale, unowned, reopened and unread cards across six columns](docs/images/board-light.png)
@@ -98,7 +98,7 @@ the Claude Code hooks that heartbeat and drop a card, and the reference skill in
 | Operations    | Point-in-time recovery, deletion protection, retained data; versioned migrations run by the deploy. Runbooks in [docs/operations.md](docs/operations.md).    |
 | API           | [OpenAPI 3.1](docs/openapi.yaml), held to the code by a contract test that validates real responses.                                                     |
 | Testing       | Service, CLI, web, CDK synth, contract and workflow tests on every change; a Chromium end-to-end run; a pack test that installs the published tarballs.     |
-| Supply chain  | SHA-pinned actions, CodeQL, Dependabot, npm provenance, and a publish that waits for the owner's 2FA approval.                                             |
+| Supply chain  | SHA-pinned actions, CodeQL (once the repository is public), Dependabot, npm provenance, and a publish that waits for the owner's 2FA approval.                                             |
 
 ## Develop
 
