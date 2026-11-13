@@ -7,7 +7,7 @@ description: Use before editing code in a repo that has a Baton board. Lists the
 
 A board of cards with one owner at a time. You take a card before you edit, humans steer by comment, and you hand the card on when done. Every command prints JSON; a refusal's `message` says what to do next, so do that.
 
-`baton` is `npx --yes @andrewchemis/baton-cli@0.1.1`. It needs `BATON_URL` and `BATON_TOKEN` (or AWS credentials that can read the SSM parameters `/baton/url` and `/baton/agent-token`). Run it from the git checkout you work in: it reads repo, worktree and branch from git.
+`baton` is `npx --yes @andrewchemis/baton-cli@0.1.2`. It needs `BATON_URL` and `BATON_TOKEN` (or AWS credentials that can read the SSM parameters `/baton/url` and `/baton/agent-token`). Run it from the git checkout you work in: it reads repo, worktree and branch from git.
 
 ## The loop
 

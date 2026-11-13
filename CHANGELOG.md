@@ -1,5 +1,9 @@
 # Changelog
 
+## <small>0.1.2 (2026-11-13)</small>
+
+* chore: add hooks that keep agent tool output small (#8) ([0d973bf](https://github.com/Andrew-Chemis/baton/commit/0d973bf)), closes [#8](https://github.com/Andrew-Chemis/baton/issues/8)
+
 ## <small>0.1.1 (2026-11-13)</small>
 
 * fix: pin the changelog preset to the 9.x line the release plugin can require (#7) ([d536f97](https://github.com/Andrew-Chemis/baton/commit/d536f97)), closes [#7](https://github.com/Andrew-Chemis/baton/issues/7)
