@@ -1,0 +1,25 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "singleQuote": true,
+  "trailingComma": "all",
+  "tabWidth": 2,
+  "semi": true,
+  "printWidth": 120,
+  "sortPackageJson": false,
+  "ignorePatterns": [
+    "node_modules/**",
+    "**/dist/**",
+    "**/lib/**",
+    "packages/cdk/assets/**",
+    "coverage/**",
+    "cdk.out/**",
+    ".cache/**",
+    "pnpm-lock.yaml",
+    "**/*.md",
+    "**/*.json",
+    "**/*.yml",
+    "**/*.yaml",
+    "**/*.html",
+    "**/*.css"
+  ]
+}
