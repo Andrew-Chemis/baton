@@ -480,6 +480,16 @@ Where the build differs from the text above. None changes a requirement.
     own stack; only the certificate, the zone and the web ACL's ARN cross
     from us-east-1, through `crossRegionReferences`.
 
+14. **Production hardening (after task 10).** Added beyond the requirements, none of which they
+    forbid: agent and token management is for a Cognito `admins` group; tokens expire (90 days by
+    default, `token_expired`); bodies over 256 KiB are refused (`payload_too_large`); archived cards
+    move to `#ARCHIVED` index partitions; a claim checks the repo map (`repo_unregistered`); the
+    function logs one JSON line per request and the stage writes an access log; metrics, alarms and a
+    dashboard are opt-in props; the table records a schema version and a deploy runs numbered
+    migrations through a custom resource; `docs/openapi.yaml` is held to the router by a contract
+    test; a Chromium end-to-end run covers the web app. `docs/architecture.md` and
+    `docs/operations.md` describe them.
+
 ## Advisor review rubric
 
 Residue requirements and what the reviewer judges them against:
