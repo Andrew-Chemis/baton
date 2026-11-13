@@ -27,6 +27,8 @@ import {
   HUMAN_PREFIX,
   LEASE_MINUTES_DEFAULT,
   METRICS_ENV,
+  ADMIN_GROUP_DEFAULT,
+  ADMIN_GROUP_ENV,
   TABLE_KEYS,
   TIMING_ENV,
   TTL_ATTRIBUTE,
@@ -61,6 +63,8 @@ export interface BatonBoardProps {
   readonly metrics?: boolean;
   /** Alarms, and optionally a dashboard. Default none: each alarm is a standing charge. */
   readonly monitoring?: BatonMonitoringOptions;
+  /** The Cognito group whose members manage agents and tokens. The construct creates it. Default `admins`. */
+  readonly adminGroupName?: string;
   /** How long the function and access logs are kept. Default one month. */
   readonly logRetention?: RetentionDays;
 }
@@ -141,6 +145,12 @@ export class BatonBoard extends Construct {
       deletionProtection: protect,
       removalPolicy: removal,
     });
+    const adminGroup = props.adminGroupName ?? ADMIN_GROUP_DEFAULT;
+    new cognito.CfnUserPoolGroup(this, 'AdminGroup', {
+      userPoolId: this.userPool.userPoolId,
+      groupName: adminGroup,
+      description: 'May create agent identities and issue and revoke their tokens',
+    });
     const domainPrefix =
       props.cognitoDomainPrefix ??
       Fn.join('-', [prefix, Fn.select(0, Fn.split('-', Fn.select(2, Fn.split('/', Aws.STACK_ID))))]);
@@ -181,6 +191,7 @@ export class BatonBoard extends Construct {
       systemLogLevelV2: lambda.SystemLogLevel.INFO,
       environment: {
         BATON_TABLE: this.table.tableName,
+        [ADMIN_GROUP_ENV]: adminGroup,
         ...(props.metrics ? { [METRICS_ENV]: '1' } : {}),
         [TIMING_ENV.leaseMinutes]: String(leaseMinutes),
         [TIMING_ENV.heartbeatSeconds]: String(heartbeatSeconds),

@@ -3,7 +3,7 @@
 // Authentication happens at the gateway, once per prefix: /api/human/* sits behind the Cognito JWT authorizer and
 // /api/agent/* behind the bearer-token authorizer, so a route never has to accept both credentials. The checks here read what
 // the gateway attached to the request and refuse anything that is missing, so a mis-wired route fails closed.
-import { AGENT_PREFIX, HUMAN_PREFIX } from '../src/schema.ts';
+import { AGENT_PREFIX, HUMAN_PREFIX, MAX_BODY_BYTES } from '../src/schema.ts';
 import type { Actor, ActorKind } from './api-types.ts';
 import { COLUMNS } from './api-types.ts';
 import { createAgent, createToken, deleteAgent, listAgents, revokeToken, verifyToken } from './agents.ts';
@@ -47,7 +47,8 @@ interface Call {
   body: unknown;
 }
 
-type Who = ActorKind | 'both';
+/** `admin` is a person in the board's admin group: agent and token management is theirs alone. */
+type Who = ActorKind | 'both' | 'admin';
 interface Route {
   /** `METHOD /path/:param`, as logged. */
   name: string;
@@ -111,11 +112,11 @@ const ROUTES: Route[] = [
   route('POST', '/cards/:id/release', 'agent', byId(releaseCard)),
   route('POST', '/cards/:id/archive', 'human', byId(archiveCard)),
 
-  route('GET', '/agents', 'human', async ({ deps }) => ok(await listAgents(deps))),
-  route('POST', '/agents', 'human', ({ deps, ctx, body }) => createAgent(deps, ctx, body)),
-  route('DELETE', '/agents/:id', 'human', byId(deleteAgent)),
-  route('POST', '/agents/:id/tokens', 'human', byId(createToken)),
-  route('DELETE', '/agents/:id/tokens/:tokenId', 'human', ({ deps, ctx, params }) =>
+  route('GET', '/agents', 'admin', async ({ deps }) => ok(await listAgents(deps))),
+  route('POST', '/agents', 'admin', ({ deps, ctx, body }) => createAgent(deps, ctx, body)),
+  route('DELETE', '/agents/:id', 'admin', byId(deleteAgent)),
+  route('POST', '/agents/:id/tokens', 'admin', byId(createToken)),
+  route('DELETE', '/agents/:id/tokens/:tokenId', 'admin', ({ deps, ctx, params }) =>
     revokeToken(deps, ctx, params.id as string, params.tokenId as string),
   ),
 ];
@@ -156,6 +157,12 @@ function resolveActor(event: HttpEvent, kind: ActorKind): Actor {
     return { kind: 'human', id: typeof claims?.email === 'string' && claims.email ? claims.email : sub };
   }
   const context = event.requestContext.authorizer?.lambda;
+  if (context?.verdict === 'expired') {
+    throw new ApiError(
+      'token_expired',
+      'This token has expired. Ask the human to issue a new one on the Agents page, then set BATON_TOKEN.',
+    );
+  }
   if (context?.verdict === 'revoked') {
     throw new ApiError(
       'token_revoked',
@@ -182,7 +189,12 @@ const PREFIX: Record<ActorKind, string> = { human: HUMAN_PREFIX, agent: AGENT_PR
 function respond(status: number, body: unknown, extra: Record<string, string> = {}): HttpResult {
   return {
     statusCode: status,
-    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...extra },
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+      ...extra,
+    },
     body: JSON.stringify(body),
   };
 }
@@ -218,6 +230,20 @@ export async function handleHttp(deps: Deps, event: HttpEvent): Promise<HttpResu
   return result;
 }
 
+/**
+ * The person's Cognito groups. The HTTP API's JWT authorizer hands an array claim to the function as one string, `[a b]`;
+ * a direct invocation may pass the array itself.
+ */
+export function groupsOf(event: HttpEvent): string[] {
+  const raw = event.requestContext.authorizer?.jwt?.claims?.['cognito:groups'];
+  if (Array.isArray(raw)) return raw.filter((g): g is string => typeof g === 'string');
+  if (typeof raw !== 'string') return [];
+  return raw
+    .replace(/^\[|\]$/g, '')
+    .split(/[\s,]+/)
+    .filter(Boolean);
+}
+
 const subjectOf = (event: HttpEvent): string => {
   const sub = event.requestContext.authorizer?.jwt?.claims?.sub;
   return typeof sub === 'string' ? sub : 'unknown';
@@ -243,7 +269,17 @@ async function serve(
     const found = match(method, segments);
     if (!found) throw notFound(`No route ${method} ${path}.`);
     trace.route = found.route.name;
-    if (found.route.who !== 'both' && found.route.who !== kind) {
+    if (found.route.who === 'admin') {
+      if (kind !== 'human')
+        throw forbidden(
+          `${method} ${segments.join('/')} is for people signed in to the web app, under ${HUMAN_PREFIX}/.`,
+        );
+      if (!groupsOf(event).includes(deps.config.adminGroup)) {
+        throw forbidden(
+          `Managing agents and tokens is for the board's admins. Ask an admin to add you to the "${deps.config.adminGroup}" group in the user pool.`,
+        );
+      }
+    } else if (found.route.who !== 'both' && found.route.who !== kind) {
       throw forbidden(
         found.route.who === 'agent'
           ? `${method} ${segments.join('/')} is for agents: call it with an agent token under ${AGENT_PREFIX}/.`
@@ -252,6 +288,12 @@ async function serve(
     }
     let rawBody = event.body;
     if (rawBody && event.isBase64Encoded) rawBody = Buffer.from(rawBody, 'base64').toString('utf8');
+    if (rawBody && Buffer.byteLength(rawBody, 'utf8') > MAX_BODY_BYTES) {
+      throw new ApiError(
+        'payload_too_large',
+        `The request body is over ${MAX_BODY_BYTES / 1024} KiB. A card body holds at most 20,000 characters; send less.`,
+      );
+    }
     let body: unknown;
     if (rawBody) {
       try {

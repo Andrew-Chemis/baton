@@ -22,7 +22,11 @@ import {
 import { asObject, normalizeName, text } from './validate.ts';
 
 const MAX_TOKENS_PER_AGENT = 20;
-const TOMBSTONE_MS = 30 * 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const TOMBSTONE_MS = 30 * DAY_MS;
+/** A token lasts this long unless its creator picks another span; a leaked token stops working on its own. */
+export const TOKEN_DAYS_DEFAULT = 90;
+export const TOKEN_DAYS_MAX = 365;
 
 const sha256 = (value: string) => hash('sha256', value);
 
@@ -30,6 +34,7 @@ const tokenView = (t: AgentTokenItem): AgentTokenView => ({
   tokenId: t.tokenId,
   label: t.label,
   createdAt: t.createdAt,
+  expiresAt: t.expiresAt ?? null,
 });
 
 async function tokensOf(deps: Deps, agentId: string): Promise<AgentTokenItem[]> {
@@ -110,7 +115,14 @@ const tombstone = (sha: string, now: number): TransactItem =>
   });
 
 export function createToken(deps: Deps, ctx: RequestCtx, agentId: string, input: unknown): Promise<Reply> {
-  const label = (text(asObject(input).label, 'label', { max: 80, optional: true }) ?? 'token').trim() || 'token';
+  const body = asObject(input);
+  const label = (text(body.label, 'label', { max: 80, optional: true }) ?? 'token').trim() || 'token';
+  const days = body.expiresInDays ?? TOKEN_DAYS_DEFAULT;
+  if (typeof days !== 'number' || !Number.isInteger(days) || days < 1 || days > TOKEN_DAYS_MAX) {
+    throw badRequest(
+      `expiresInDays must be a whole number from 1 to ${TOKEN_DAYS_MAX}; it defaults to ${TOKEN_DAYS_DEFAULT}.`,
+    );
+  }
   return execute(deps, ctx, async (now) => {
     const agent = await getItem<AgentItem>(deps, agentKey(agentId));
     if (!agent) throw notFound(`No agent "${agentId}". Create it first.`);
@@ -122,7 +134,18 @@ export function createToken(deps: Deps, ctx: RequestCtx, agentId: string, input:
     const token = newToken();
     const sha = sha256(token);
     const tokenId = newId(now);
-    const tokenItem: TokenItem = { ...tokenKey(sha), SK: 'META', type: 'token', agentId, tokenId, createdAt: now };
+    const expiresAt = now + days * DAY_MS;
+    const tokenItem: TokenItem = {
+      ...tokenKey(sha),
+      SK: 'META',
+      type: 'token',
+      agentId,
+      tokenId,
+      createdAt: now,
+      expiresAt,
+      // DynamoDB removes the item once it has been expired as long as a revoked token's tombstone lasts.
+      ttl: Math.ceil((expiresAt + TOMBSTONE_MS) / 1000),
+    };
     const listing: AgentTokenItem = {
       ...agentTokenKey(agentId, tokenId),
       type: 'agent-token',
@@ -130,6 +153,7 @@ export function createToken(deps: Deps, ctx: RequestCtx, agentId: string, input:
       sha256: sha,
       label,
       createdAt: now,
+      expiresAt,
     };
     return {
       items: [putNew(tokenItem), putItem(listing), conditionCheck(agentKey(agentId))],
@@ -140,6 +164,7 @@ export function createToken(deps: Deps, ctx: RequestCtx, agentId: string, input:
           tokenId,
           label,
           agentId,
+          expiresAt,
           note: 'This is the only time the token is shown. Store it as BATON_TOKEN or in the SSM parameter the CLI reads.',
         },
         // A replay must not hand the secret out of the idempotency record, so the record holds everything but the token.
@@ -148,6 +173,7 @@ export function createToken(deps: Deps, ctx: RequestCtx, agentId: string, input:
           tokenId,
           label,
           agentId,
+          expiresAt,
           note: 'This request was already completed and the token was shown once. Revoke it and issue a new one if it was lost.',
         },
       },
@@ -167,12 +193,13 @@ export function revokeToken(deps: Deps, ctx: RequestCtx, agentId: string, tokenI
   });
 }
 
-type TokenVerdict = { verdict: 'ok'; agentId: string } | { verdict: 'revoked' | 'unknown' };
+type TokenVerdict = { verdict: 'ok'; agentId: string } | { verdict: 'revoked' | 'expired' | 'unknown' };
 
 export async function verifyToken(deps: Deps, bearer: string): Promise<TokenVerdict> {
   if (!bearer.startsWith('baton_') || bearer.length > 200) return { verdict: 'unknown' };
   const item = await getItem<TokenItem>(deps, tokenKey(sha256(bearer)));
   if (!item) return { verdict: 'unknown' };
   if (item.revokedAt !== undefined) return { verdict: 'revoked' };
+  if (item.expiresAt !== undefined && item.expiresAt <= deps.now()) return { verdict: 'expired' };
   return { verdict: 'ok', agentId: item.agentId };
 }

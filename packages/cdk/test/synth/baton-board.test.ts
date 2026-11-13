@@ -339,4 +339,13 @@ describe('options', () => {
     const body = JSON.stringify(Object.values(template.findResources('AWS::CloudWatch::Dashboard'))[0]);
     expect(body).toContain('ClaimTakenOver');
   });
+
+  test('an admin group exists in the pool and its name reaches the Lambda', () => {
+    const { template } = synth({ adminGroupName: 'board-admins' });
+    template.hasResourceProperties('AWS::Cognito::UserPoolGroup', { GroupName: 'board-admins' });
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Handler: 'index.handler',
+      Environment: { Variables: Match.objectLike({ BATON_ADMIN_GROUP: 'board-admins' }) },
+    });
+  });
 });

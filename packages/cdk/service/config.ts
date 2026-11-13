@@ -1,9 +1,18 @@
-import { HEARTBEAT_SECONDS_DEFAULT, LEASE_MINUTES_DEFAULT, TIMING_ENV, timingProblem } from '../src/schema.ts';
+import {
+  ADMIN_GROUP_DEFAULT,
+  ADMIN_GROUP_ENV,
+  HEARTBEAT_SECONDS_DEFAULT,
+  LEASE_MINUTES_DEFAULT,
+  TIMING_ENV,
+  timingProblem,
+} from '../src/schema.ts';
 
 export interface Config {
   table: string;
   leaseMs: number;
   heartbeatSeconds: number;
+  /** The Cognito group whose members may manage agents and tokens. */
+  adminGroup: string;
 }
 
 /** The deployed defaults for `table`, with any of the timings replaced: what tests and the local server run on. */
@@ -11,6 +20,7 @@ export const configFor = (table: string, timing: Partial<Omit<Config, 'table'>> 
   table,
   leaseMs: LEASE_MINUTES_DEFAULT * 60_000,
   heartbeatSeconds: HEARTBEAT_SECONDS_DEFAULT,
+  adminGroup: ADMIN_GROUP_DEFAULT,
   ...timing,
 });
 
@@ -28,5 +38,10 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): Config {
   if (!(leaseMinutes > 0) || !(heartbeatSeconds > 0)) throw new Error('lease and heartbeat must be positive numbers');
   const problem = timingProblem(leaseMinutes, heartbeatSeconds);
   if (problem) throw new Error(problem);
-  return { table, leaseMs: Math.round(leaseMinutes * 60_000), heartbeatSeconds };
+  return {
+    table,
+    leaseMs: Math.round(leaseMinutes * 60_000),
+    heartbeatSeconds,
+    adminGroup: env[ADMIN_GROUP_ENV] || ADMIN_GROUP_DEFAULT,
+  };
 }

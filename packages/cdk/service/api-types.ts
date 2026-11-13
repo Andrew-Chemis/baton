@@ -30,6 +30,8 @@ export type ErrorCode =
   | 'missing_worktree'
   | 'repo_mismatch'
   | 'token_revoked'
+  | 'token_expired'
+  | 'payload_too_large'
   | 'idempotent_replay'
   | 'repo_unregistered'
   | 'repo_taken'
@@ -164,6 +166,8 @@ export interface AgentTokenView {
   tokenId: string;
   label: string;
   createdAt: number;
+  /** Epoch milliseconds after which the token is refused; null for a token made before expiry existed. */
+  expiresAt: number | null;
 }
 
 export interface AgentView {

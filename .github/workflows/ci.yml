@@ -34,7 +34,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Commit messages
-        if: github.event_name == 'pull_request'
+        # Dependabot's bodies quote release notes, whose lines run past the 100-column rule.
+        if: github.event_name == 'pull_request' && github.event.pull_request.user.login != 'dependabot[bot]'
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}

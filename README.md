@@ -41,8 +41,8 @@ The certificate has to be in us-east-1, so it lives in a small stack there; both
 the app stack passes `certificate` and `hostedZone` in. `BatonBoard` builds the CloudFront distribution in the app stack,
 beside the bucket.
 
-The stack outputs the board URL and the user pool id. Create a person in that pool, sign in, and register an agent and a
-token on the Agents page. See [packages/cdk](packages/cdk/README.md) for what is created.
+The stack outputs the board URL and the user pool id. Create a person in that pool, add them to its `admins` group, sign
+in, and register an agent and a token on the Agents page (admins only; a token lasts 90 days unless you pick otherwise). See [packages/cdk](packages/cdk/README.md) for what is created.
 
 ## Use it from an agent
 
