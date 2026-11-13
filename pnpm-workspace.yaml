@@ -1,0 +1,5 @@
+packages:
+  - packages/*
+# esbuild's postinstall selects the platform binary; nothing else may run install scripts.
+onlyBuiltDependencies:
+  - esbuild

@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "es2023",
+    "lib": ["es2023", "dom", "dom.iterable"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "jsx": "react-jsx",
+    "jsxImportSource": "preact",
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitReturns": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noUncheckedIndexedAccess": true
+  },
+  "include": ["packages/*/src/**/*.ts", "packages/*/service/**/*.ts", "packages/*/web/**/*.ts", "packages/*/web/**/*.tsx", "packages/*/web/**/*.d.ts", "packages/*/test/**/*.ts", "packages/*/test/**/*.tsx", "packages/*/scripts/**/*.ts", "packages/*/scripts/**/*.mts", "packages/*/web/*.mts", "scripts/*.ts", "test/*.ts", "vitest.config.ts"]
+}
