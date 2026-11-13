@@ -1,6 +1,14 @@
 // Pure functions over card items: derived keys, derived state, views. No I/O.
 import type { Actor, CardState, CardView, ClaimEnd, ClaimView, EventBody, EventType, EventView } from './api-types.ts';
-import { attentionPartition, boardPartition, boardSort, cardKey, eventKey, repoPartition } from './keys.ts';
+import {
+  archivedPartition,
+  attentionPartition,
+  boardPartition,
+  boardSort,
+  cardKey,
+  eventKey,
+  repoPartition,
+} from './keys.ts';
 import type { CardItem, ClaimItem, EventItem, LastClaimItem } from './items.ts';
 
 export type CardFields = Omit<CardItem, 'PK' | 'SK' | 'GSI1PK' | 'GSI1SK' | 'GSI2PK' | 'GSI2SK' | 'GSI3PK' | 'GSI3SK'>;
@@ -31,13 +39,14 @@ const needsAttention = (card: CardFields): boolean =>
 /** Attaches every key attribute, derived from the logical fields so a move or an ack can never leave an index stale. */
 export function keyed(card: CardFields): CardItem {
   const agent = needsAttention(card) ? card.lastAgentId : undefined;
+  const shelf = (partition: string) => (card.archived ? archivedPartition(partition) : partition);
   return {
     ...card,
     ...cardKey(card.id),
     SK: 'META',
-    GSI1PK: boardPartition(card.projectId),
+    GSI1PK: shelf(boardPartition(card.projectId)),
     GSI1SK: boardSort(card.column, card.pos, card.id),
-    GSI2PK: repoPartition(card.repo),
+    GSI2PK: shelf(repoPartition(card.repo)),
     GSI2SK: `CARD#${card.id}`,
     GSI3PK: agent === undefined ? undefined : attentionPartition(agent),
     GSI3SK: agent === undefined ? undefined : `${String(card.updatedAt).padStart(15, '0')}#${card.id}`,
