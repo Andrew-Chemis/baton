@@ -8,6 +8,17 @@ updates:
       interval: weekly
       day: monday
     open-pull-requests-limit: 5
+    ignore:
+      # Majors of the release tooling are bumped by hand: only the release workflow on GitHub exercises them, and the preset's
+      # 10.x ships ES modules only, which the CommonJS plugin that loads it cannot require.
+      - dependency-name: conventional-changelog-conventionalcommits
+        update-types: ['version-update:semver-major']
+      - dependency-name: '@semantic-release/*'
+        update-types: ['version-update:semver-major']
+      - dependency-name: semantic-release
+        update-types: ['version-update:semver-major']
+      - dependency-name: semantic-release-unsquash
+        update-types: ['version-update:semver-major']
     commit-message:
       prefix: chore
       include: scope

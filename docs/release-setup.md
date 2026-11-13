@@ -6,7 +6,8 @@ belongs in the repository.
 How a release goes, after the setup:
 
 1. A commit lands on `main`. `changelog.yml` computes the next version from the Conventional Commits since the last tag
-   (every type is a patch; a minor only from a `chore(minor):` commit; a breaking marker is capped at a minor), writes
+   (every type is a patch; a minor only from a `chore(minor):` commit; a `BREAKING CHANGE:` footer is capped at a minor and a `!` in the
+   header releases nothing), writes
    `CHANGELOG.md`, writes the version into both packages and the pin in the reference skill and hooks, commits that,
    tags it and publishes a GitHub release.
 2. The published release starts `release.yml`. Its `build` job checks that the tag is on `main` and names the version in
