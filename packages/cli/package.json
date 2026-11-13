@@ -1,6 +1,6 @@
 {
   "name": "@andrewchemis/baton-cli",
-  "version": "0.0.0",
+  "version": "0.1.1",
   "description": "The baton command: claim, heartbeat, check and pass cards on a Baton board from any git checkout",
   "keywords": [
     "baton",

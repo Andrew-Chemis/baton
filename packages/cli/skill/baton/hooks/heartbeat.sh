@@ -5,7 +5,7 @@
 # the lease was just extended. Only claims and heartbeats touch the stamp; `baton check` and `ack` rewrite the state file
 # and must not hold the heartbeat back.
 # It never fails the session. Wiring: docs/agents.md in the Baton repository.
-cli="${BATON_CLI:-@andrewchemis/baton-cli@0.0.0}"
+cli="${BATON_CLI:-@andrewchemis/baton-cli@0.1.1}"
 state=$(git rev-parse --git-path baton-card 2>/dev/null) || exit 0
 [ -f "$state" ] || exit 0
 [ -z "$(find "$state.beat" -mmin -1 2>/dev/null)" ] || exit 0

@@ -1,6 +1,6 @@
 {
   "name": "@andrewchemis/baton-cdk",
-  "version": "0.0.0",
+  "version": "0.1.1",
   "description": "AWS CDK constructs that deploy Baton, an agent-first kanban board: DynamoDB, API Gateway, Cognito, S3 and CloudFront",
   "keywords": [
     "baton",
