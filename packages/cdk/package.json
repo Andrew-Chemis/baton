@@ -45,12 +45,12 @@
     "provenance": true
   },
   "devDependencies": {
-    "@aws-sdk/client-dynamodb": "^3.1164.0",
-    "@aws-sdk/lib-dynamodb": "^3.1164.0",
+    "@aws-sdk/client-dynamodb": "^3.1165.0",
+    "@aws-sdk/lib-dynamodb": "^3.1165.0",
     "aws-cdk-lib": "^2.275.0",
     "constructs": "^10.8.1",
     "esbuild": "^0.28.2",
     "preact": "^11.2.0",
-    "vite": "^8.3.6"
+    "vite": "^8.3.7"
   }
 }
