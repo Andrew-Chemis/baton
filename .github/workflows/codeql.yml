@@ -21,6 +21,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
+      # The action reads its own workflow run to label the upload; without this the upload fails.
+      actions: read
       contents: read
       security-events: write
     steps:
