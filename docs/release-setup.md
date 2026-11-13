@@ -69,10 +69,11 @@ npm's trusted-publisher setting lives in a package's settings on npmjs.com, whic
 npm's documentation does not describe configuring one beforehand. The Lede repository's pipeline, which this one is
 modelled on, used a token for its first publish, so do the same:
 
-1. On npmjs.com create a granular access token that can write packages in the `@andrewchemis` scope, with the shortest
-   expiry that covers the first release.
-2. Add it as an environment secret named `NPM_TOKEN` on the `npm` environment (an environment secret, not a repository
-   secret: only the publish job runs in that environment).
+1. On npmjs.com create a granular access token that can read and write (stage only) the packages in the `@andrewchemis`
+   scope, with the shortest expiry that covers the first release.
+2. Add it as a secret named `NPM_STAGING_TOKEN`: an organization secret shared with this repository, or a secret on the
+   `npm` environment. The token can only stage, so nothing it uploads is public until you approve it with 2FA. Share an
+   organization secret only with the repositories that publish.
 3. Cut the first release and approve the environment and the staged versions as above.
 
 **Placeholder risk.** The Lede pipeline's notes say that staging a package that does not exist yet makes npm publish a
@@ -91,7 +92,7 @@ After the first version of each package exists, on npmjs.com open the package's 
 - Environment name: `npm`
 
 Do this for both packages. npm's documentation says a newly created trusted-publisher configuration must complete its first
-successful publish within 2 days, so cut a release soon after. Then delete the `NPM_TOKEN` environment secret and revoke
+successful publish within 2 days, so cut a release soon after. Then delete the `NPM_STAGING_TOKEN` secret and revoke
 the token on npm: with no token set, `npm stage publish` authenticates through the workflow's OIDC token.
 
 Trusted publishing needs npm 11.5.1 or later; `npm stage` needs 11.15.0 or later. Node 24 does not bundle that, so the

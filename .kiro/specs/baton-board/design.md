@@ -246,7 +246,7 @@ checkout, no install of repository code, `environment: npm`, `id-token:
 write` only; stages both tarballs with `npm stage publish` and provenance via
 trusted publishing. The owner approves the environment on the run, then
 approves each staged version on npm with 2FA. The first publish bootstraps
-with an `NPM_TOKEN` on the environment; the token is deleted once trusted
+with an `NPM_STAGING_TOKEN` secret (stage-only); the token is deleted once trusted
 publishing names this repo and workflow.
 
 `ci.yml` on pull requests: typecheck, lint, format check, the
@@ -408,7 +408,7 @@ what stands in for it.
   before the first version exists, and whether staging creates the `0.0.0-stage`
   placeholder the sibling pipeline's notes warn of cannot be tested without
   publishing. `docs/release-setup.md` bootstraps with a short-lived
-  `NPM_TOKEN` environment secret and names the placeholder risk.
+  `NPM_STAGING_TOKEN` secret and names the placeholder risk.
 - **The GitHub workflows on a runner, and the GitHub App.** The file
   structure and rules are tested; the runs are not. The first `changelog.yml`
   run needs the app, its two secrets and a `v0.*` tag (`docs/release-setup.md`).

@@ -11,7 +11,7 @@ name: release
 #
 # Authentication is npm trusted publishing (OIDC): each package on npmjs.com names this repository, this file (release.yml) and
 # the `npm` environment. npm configures a trusted publisher on a package that already exists, so the very first stage uses an
-# NPM_TOKEN secret on the `npm` environment instead; delete the secret once trusted publishing is set up. Staging a package that
+# NPM_STAGING_TOKEN secret instead (an npm token that can only stage); delete it once trusted publishing is set up. Staging a package that
 # does not exist makes npm publish a public placeholder, 0.0.0-stage. docs/release-setup.md has the steps.
 #
 # The build job tests and packs; the publish job, the only one with an OIDC token, stages those tarballs. Both packages carry one
@@ -124,7 +124,7 @@ jobs:
           path: release
       - name: Stage
         env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_STAGING_TOKEN }}
         run: |
           node -e '
             const [a, b] = process.argv[1].split(".").map(Number);

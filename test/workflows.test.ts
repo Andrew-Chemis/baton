@@ -162,6 +162,8 @@ describe('release.yml', () => {
 
   test('only the publish job sees the npm token, and only the build job runs repository code', () => {
     expect(JSON.stringify(build)).not.toContain('NPM_TOKEN');
+    expect(JSON.stringify(build)).not.toContain('NPM_STAGING_TOKEN');
+    expect(JSON.stringify(publish)).toContain('secrets.NPM_STAGING_TOKEN');
     expect(build.permissions).toEqual({ contents: 'read' });
     expect(build.environment).toBeUndefined();
   });
