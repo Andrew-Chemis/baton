@@ -42,13 +42,15 @@ const PINS: Record<string, { sha: string; version: string }> = {
   'actions/create-github-app-token': { sha: '64ab729a6294000f5aa4a4bc0b73d1f32bc45510', version: 'v3' },
   'actions/download-artifact': { sha: '9000827ccba6bdab643e8b6fd33ac0654aef8333', version: 'v8.0.2' },
   'actions/setup-node': { sha: '949feb2413d6458794dcd2491c4babbbce0c15c1', version: 'v7.1.0' },
+  'github/codeql-action/analyze': { sha: '33d7b85da1a04171e211befe2c739303b9a4c066', version: 'v4.39.3' },
+  'github/codeql-action/init': { sha: '33d7b85da1a04171e211befe2c739303b9a4c066', version: 'v4.39.3' },
   'actions/upload-artifact': { sha: 'cf430e030ddbb5b0abf93d22962f4752f3646cd9', version: 'v7.0.2' },
   'pnpm/action-setup': { sha: 'ea17c68df8912ef543352723c149a84f56e3d413', version: 'v6.1.0' },
 };
 
 describe('every workflow', () => {
-  test('there are the three expected', () => {
-    expect(files.toSorted()).toEqual(['changelog.yml', 'ci.yml', 'release.yml']);
+  test('there are the four expected', () => {
+    expect(files.toSorted()).toEqual(['changelog.yml', 'ci.yml', 'codeql.yml', 'release.yml']);
   });
 
   test.each(files)('%s: permissions are empty at the top and granted per job', (name) => {
@@ -203,6 +205,12 @@ describe('changelog.yml', () => {
   });
 });
 
+describe('codeql.yml', () => {
+  test('runs only while the repository is public, where code scanning needs no Advanced Security', () => {
+    expect(workflow('codeql.yml').jobs.analyze?.if).toContain('!github.event.repository.private');
+  });
+});
+
 describe('ci.yml', () => {
   const job = workflow('ci.yml').jobs.test as Job;
 
@@ -223,6 +231,14 @@ describe('ci.yml', () => {
     ]) {
       expect(commands, wanted).toContain(wanted);
     }
+  });
+
+  test('drives the web app in a browser, in a job of its own with read access only', () => {
+    const e2e = workflow('ci.yml').jobs.e2e as Job;
+    expect(e2e.permissions).toEqual({ contents: 'read' });
+    const commands = e2e.steps.map((s) => s.run ?? '');
+    expect(commands).toContain('pnpm test:e2e');
+    expect(commands.some((c) => c.includes('playwright-core install'))).toBe(true);
   });
 
   test('validates commit messages on a pull request', () => {

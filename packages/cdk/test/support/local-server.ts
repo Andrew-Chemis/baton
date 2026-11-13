@@ -48,7 +48,7 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
         const body = await text(req);
         const human = url.pathname.startsWith(`${HUMAN_PREFIX}/`);
         const authorizer: HttpEvent['requestContext']['authorizer'] = human
-          ? { jwt: { claims: { sub: 'local-user', email } } }
+          ? { jwt: { claims: { sub: 'local-user', email, 'cognito:groups': '[admins]' } } }
           : headers.authorization
             ? { lambda: (await authorize(deps, { type: 'REQUEST', routeArn: 'local', headers })).context }
             : undefined;

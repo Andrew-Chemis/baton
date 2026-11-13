@@ -1,4 +1,4 @@
-import { Aws, CfnOutput, Duration, Fn, RemovalPolicy, Stack } from 'aws-cdk-lib';
+import { Aws, CfnOutput, CustomResource, Duration, Fn, RemovalPolicy, Stack } from 'aws-cdk-lib';
 import { CfnStage, HttpApi, HttpMethod } from 'aws-cdk-lib/aws-apigatewayv2';
 import {
   HttpJwtAuthorizer,
@@ -14,9 +14,11 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import type { IHostedZone } from 'aws-cdk-lib/aws-route53';
 import * as s3 from 'aws-cdk-lib/aws-s3';
+import { Provider } from 'aws-cdk-lib/custom-resources';
 import { Construct } from 'constructs';
 import { API_ASSET_PATH } from './assets.js';
 import { BatonDistribution, type FlatRatePlan } from './baton-distribution.js';
+import { BatonMonitoring, type BatonMonitoringOptions } from './baton-monitoring.js';
 import {
   AGENT_PREFIX,
   GSI1,
@@ -25,11 +27,15 @@ import {
   HEARTBEAT_SECONDS_DEFAULT,
   HUMAN_PREFIX,
   LEASE_MINUTES_DEFAULT,
+  METRICS_ENV,
+  ADMIN_GROUP_DEFAULT,
+  ADMIN_GROUP_ENV,
   TABLE_KEYS,
   TIMING_ENV,
   TTL_ATTRIBUTE,
   timingProblem,
 } from './schema.js';
+import { LATEST_SCHEMA } from './schema-version.js';
 
 export interface BatonBoardProps {
   /** The name the board is served on, e.g. baton.example.com. It is also the Cognito callback origin. */
@@ -52,6 +58,17 @@ export interface BatonBoardProps {
   readonly cognitoDomainPrefix?: string;
   /** Extra OAuth callback URLs, for local development. */
   readonly extraCallbackUrls?: string[];
+  /**
+   * Emit the claim metrics (granted, refused, taken over) and a server-error count to CloudWatch, namespace `Baton`. Four
+   * custom metrics with no dimensions: a fixed, small monthly charge. Default false; the request log is written either way.
+   */
+  readonly metrics?: boolean;
+  /** Alarms, and optionally a dashboard. Default none: each alarm is a standing charge. */
+  readonly monitoring?: BatonMonitoringOptions;
+  /** The Cognito group whose members manage agents and tokens. The construct creates it. Default `admins`. */
+  readonly adminGroupName?: string;
+  /** How long the function and access logs are kept. Default one month. */
+  readonly logRetention?: RetentionDays;
 }
 
 /**
@@ -68,6 +85,14 @@ export class BatonBoard extends Construct {
   public readonly bucket: s3.Bucket;
   /** Set when a certificate and a hosted zone were given. */
   public readonly edge?: BatonDistribution;
+  /** Set when `monitoring` was given. */
+  public readonly monitoring?: BatonMonitoring;
+  /** Runs the data migrations on every deploy that brings a new schema version. */
+  public readonly migrationFunction: lambda.Function;
+  /** The function's log: one JSON line per request (see the README's Operations section). */
+  public readonly logGroup: LogGroup;
+  /** API Gateway's access log, which also records the requests an authorizer refused before the function ran. */
+  public readonly accessLogGroup: LogGroup;
   /** https://<domainName> */
   public readonly url: string;
 
@@ -124,6 +149,12 @@ export class BatonBoard extends Construct {
       deletionProtection: protect,
       removalPolicy: removal,
     });
+    const adminGroup = props.adminGroupName ?? ADMIN_GROUP_DEFAULT;
+    new cognito.CfnUserPoolGroup(this, 'AdminGroup', {
+      userPoolId: this.userPool.userPoolId,
+      groupName: adminGroup,
+      description: 'May create agent identities and issue and revoke their tokens',
+    });
     const domainPrefix =
       props.cognitoDomainPrefix ??
       Fn.join('-', [prefix, Fn.select(0, Fn.split('-', Fn.select(2, Fn.split('/', Aws.STACK_ID))))]);
@@ -146,10 +177,9 @@ export class BatonBoard extends Construct {
       refreshTokenValidity: Duration.days(30),
     });
 
-    const logGroup = new LogGroup(this, 'ApiLogs', {
-      retention: RetentionDays.ONE_MONTH,
-      removalPolicy: RemovalPolicy.DESTROY,
-    });
+    const retention = props.logRetention ?? RetentionDays.ONE_MONTH;
+    const logGroup = new LogGroup(this, 'ApiLogs', { retention, removalPolicy: RemovalPolicy.DESTROY });
+    this.logGroup = logGroup;
     this.apiFunction = new lambda.Function(this, 'Api', {
       description: 'Baton board API and agent-token authorizer',
       runtime: lambda.Runtime.NODEJS_24_X,
@@ -159,8 +189,14 @@ export class BatonBoard extends Construct {
       memorySize: 256,
       timeout: Duration.seconds(10),
       logGroup,
+      // JSON, so Logs Insights can query the request lines and the runtime's own lines by field.
+      loggingFormat: lambda.LoggingFormat.JSON,
+      applicationLogLevelV2: lambda.ApplicationLogLevel.INFO,
+      systemLogLevelV2: lambda.SystemLogLevel.INFO,
       environment: {
         BATON_TABLE: this.table.tableName,
+        [ADMIN_GROUP_ENV]: adminGroup,
+        ...(props.metrics ? { [METRICS_ENV]: '1' } : {}),
         [TIMING_ENV.leaseMinutes]: String(leaseMinutes),
         [TIMING_ENV.heartbeatSeconds]: String(heartbeatSeconds),
       },
@@ -180,6 +216,38 @@ export class BatonBoard extends Construct {
         resources: [this.table.tableArn, `${this.table.tableArn}/index/*`],
       }),
     );
+
+    // The same bundle with a second entry point brings the table to the schema this version of the code expects. It runs on
+    // the deploy that changes `SchemaVersion`, before CloudFormation finishes; a failure fails the deploy, and the next one
+    // resumes at the migration that failed. It alone may Scan, and it has the time a scan of a large table needs.
+    this.migrationFunction = new lambda.Function(this, 'Migrate', {
+      description: 'Baton board data migrations',
+      runtime: lambda.Runtime.NODEJS_24_X,
+      architecture: lambda.Architecture.ARM_64,
+      handler: 'index.migrate',
+      code: lambda.Code.fromAsset(API_ASSET_PATH),
+      memorySize: 256,
+      timeout: Duration.minutes(14),
+      logGroup,
+      loggingFormat: lambda.LoggingFormat.JSON,
+      environment: { BATON_TABLE: this.table.tableName },
+    });
+    this.migrationFunction.addToRolePolicy(
+      new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: ['dynamodb:GetItem', 'dynamodb:Scan', 'dynamodb:UpdateItem'],
+        resources: [this.table.tableArn],
+      }),
+    );
+    const migrations = new Provider(this, 'MigrationProvider', {
+      onEventHandler: this.migrationFunction,
+      logGroup: new LogGroup(this, 'MigrationProviderLogs', { retention, removalPolicy: RemovalPolicy.DESTROY }),
+    });
+    new CustomResource(this, 'Schema', {
+      serviceToken: migrations.serviceToken,
+      resourceType: 'Custom::BatonSchema',
+      properties: { SchemaVersion: String(LATEST_SCHEMA) },
+    });
 
     this.api = new HttpApi(this, 'HttpApi', {
       apiName: `${prefix}-api`,
@@ -214,7 +282,26 @@ export class BatonBoard extends Construct {
     });
     // A ceiling on request rate: a loop in an agent costs requests, and requests are what this stack bills for.
     const stage = this.api.defaultStage?.node.defaultChild as CfnStage | undefined;
-    if (stage) stage.defaultRouteSettings = { throttlingBurstLimit: 100, throttlingRateLimit: 50 };
+    this.accessLogGroup = new LogGroup(this, 'AccessLogs', { retention, removalPolicy: RemovalPolicy.DESTROY });
+    if (stage) {
+      stage.defaultRouteSettings = { throttlingBurstLimit: 100, throttlingRateLimit: 50 };
+      // No headers, no query string, no body: the route key and the outcome. `requestId` matches the function's line.
+      stage.accessLogSettings = {
+        destinationArn: this.accessLogGroup.logGroupArn,
+        format: JSON.stringify({
+          requestId: '$context.requestId',
+          time: '$context.requestTimeEpoch',
+          ip: '$context.identity.sourceIp',
+          method: '$context.httpMethod',
+          routeKey: '$context.routeKey',
+          status: '$context.status',
+          latencyMs: '$context.responseLatency',
+          integrationStatus: '$context.integrationStatus',
+          authorizerError: '$context.authorizer.error',
+          integrationError: '$context.integrationErrorMessage',
+        }),
+      };
+    }
 
     this.bucket = new s3.Bucket(this, 'WebBucket', {
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
@@ -239,6 +326,18 @@ export class BatonBoard extends Construct {
         },
         flatRatePlan: props.flatRatePlan,
         resourcePrefix: prefix,
+      });
+    }
+
+    if (props.monitoring) {
+      this.monitoring = new BatonMonitoring(this, 'Monitoring', {
+        ...props.monitoring,
+        prefix,
+        api: this.api,
+        fn: this.apiFunction,
+        table: this.table,
+        logGroup,
+        metrics: props.metrics ?? false,
       });
     }
 

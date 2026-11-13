@@ -4,7 +4,13 @@ import { ErrorNote } from './error-note.tsx';
 import { useAction, usePoll } from './hooks.ts';
 import { notify } from './toast.tsx';
 import type { AgentView } from './types.ts';
-import { ago, when } from './util.ts';
+import { ago, span, when } from './util.ts';
+
+/** How long a token has left, or that it has run out. */
+function expiry(expiresAt: number | null, now = Date.now()): string {
+  if (expiresAt === null) return 'no expiry';
+  return expiresAt <= now ? 'expired' : `expires in ${span(expiresAt - now)}`;
+}
 
 interface Issued {
   agentId: string;
@@ -32,7 +38,7 @@ export function Agents() {
       <h1>Agents</h1>
       <p class="muted">
         An agent identity is who a claim is recorded against. Each token is shown once, stored here only as its hash,
-        and works until you revoke it (within five minutes).
+        and works for 90 days or until you revoke it (within five minutes). Only the board's admins see this page.
       </p>
 
       {issued ? (
@@ -98,6 +104,9 @@ export function Agents() {
                   <span>{t.label}</span>
                   <span class="muted" title={when(t.createdAt)}>
                     {ago(t.createdAt)}
+                  </span>
+                  <span class="muted" title={t.expiresAt === null ? undefined : when(t.expiresAt)}>
+                    {expiry(t.expiresAt)}
                   </span>
                   <button
                     type="button"

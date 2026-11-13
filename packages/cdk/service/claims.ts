@@ -27,8 +27,8 @@ import { timingOf } from './config.ts';
 import type { Reply, RequestCtx } from './engine.ts';
 import { ApiError, badRequest, claimHeld, notHolder } from './errors.ts';
 import type { CardItem, ClaimItem } from './items.ts';
-import { repoPartition } from './keys.ts';
-import { queryAll, type Condition, type Deps } from './store.ts';
+import { repoKey, repoPartition } from './keys.ts';
+import { conditionCheck, getItem, queryAll, type Condition, type Deps } from './store.ts';
 import { asObject, normalizeRepo, requiredText, text } from './validate.ts';
 
 const holderOf = (agentId: string, worktree: string) => `${agentId}#${worktree}`;
@@ -111,6 +111,12 @@ export async function claimCard(deps: Deps, ctx: RequestCtx, id: string, input: 
   );
 }
 
+const stillMapped = (projectId: string): Condition => ({
+  expr: '#project = :project',
+  names: { '#project': 'projectId' },
+  values: { ':project': projectId },
+});
+
 interface ClaimArgs {
   agentId: string;
   worktree: string;
@@ -127,6 +133,15 @@ async function planClaim(deps: Deps, card: CardItem, now: number, a: ClaimArgs):
     throw new ApiError(
       'repo_mismatch',
       `Card ${card.key ?? card.id} belongs to ${card.repo}, but this checkout is ${a.repo}. Take cards for this repo with \`baton list\`, or run the command from a checkout of ${card.repo}.`,
+    );
+  }
+  const mapped = await getItem<{ projectId: string }>(deps, repoKey(card.repo));
+  if (mapped?.projectId !== card.projectId) {
+    throw new ApiError(
+      'repo_unregistered',
+      `Card ${card.key ?? card.id} is on a project that no longer holds ${card.repo}` +
+        (mapped ? ` (the repo now belongs to project ${mapped.projectId})` : '') +
+        ', so it cannot be taken. Pick a card from `baton list`, or ask the human to add the repo back to the project.',
     );
   }
   if (card.archived || card.column === 'done') {
@@ -203,6 +218,10 @@ async function planClaim(deps: Deps, card: CardItem, now: number, a: ClaimArgs):
     next,
     events,
     condition: activeOrMine(now, a.me),
+    // The repo map read above is a snapshot; the check makes a repo removed in between fail the write, and the retry then
+    // reads the new map and refuses the claim.
+    extra: [conditionCheck(repoKey(card.repo), stillMapped(card.projectId))],
+    classify: () => 'retry',
     respond: (view): ClaimResponse => ({ card: view, warnings, pending, alreadyHeld: false, ...timing }),
   };
 }

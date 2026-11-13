@@ -25,4 +25,9 @@ export const PROJECTS_PARTITION = 'PROJECTS';
 export const ARCHIVED_PROJECTS_PARTITION = 'PROJECTS#ARCHIVED';
 export const AGENTS_PARTITION = 'AGENTS';
 export const repoPartition = (repo: string) => `REPO#${repo}`;
+/**
+ * Where an archived card's board and repo index entries move, so the live board's queries never read archived cards. A repo
+ * or project id cannot contain `#`, so the suffix cannot collide with a live partition.
+ */
+export const archivedPartition = (partition: string) => `${partition}#ARCHIVED`;
 export const attentionPartition = (agentId: string) => `ATTN#${agentId}`;

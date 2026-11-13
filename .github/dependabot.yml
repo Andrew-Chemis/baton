@@ -1,0 +1,19 @@
+# Weekly, grouped dependency updates. Workflow actions are not here on purpose: every `uses:` is pinned to a SHA that
+# test/workflows.test.ts checks against a table, so an action bump is a deliberate edit to both, not a bot's.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      aws:
+        patterns: ['@aws-sdk/*', 'aws-cdk-lib', 'constructs']
+      dev-tooling:
+        dependency-type: development
+        update-types: [minor, patch]

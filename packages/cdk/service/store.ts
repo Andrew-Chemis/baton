@@ -9,11 +9,14 @@ import {
 } from '@aws-sdk/lib-dynamodb';
 import { isDeepStrictEqual } from 'node:util';
 import type { Config } from './config.ts';
+import type { Telemetry } from './telemetry.ts';
 
 export interface Deps {
   db: DynamoDBDocumentClient;
   config: Config;
   now: () => number;
+  /** Where request lines and metrics go. Absent in tests that do not look at them: nothing is written. */
+  telemetry?: Telemetry;
 }
 
 export function createDocClient(

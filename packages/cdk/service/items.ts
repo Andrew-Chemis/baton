@@ -96,6 +96,7 @@ export interface AgentTokenItem {
   sha256: string;
   label: string;
   createdAt: number;
+  expiresAt?: number | undefined;
 }
 
 export interface TokenItem {
@@ -105,6 +106,7 @@ export interface TokenItem {
   agentId: string;
   tokenId: string;
   createdAt: number;
+  expiresAt?: number | undefined;
   revokedAt?: number | undefined;
   ttl?: number | undefined;
 }

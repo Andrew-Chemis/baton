@@ -4,7 +4,7 @@ import { configFor, configFromEnv, timingOf } from '../../service/config.ts';
 describe('configFromEnv', () => {
   test('defaults to a ten minute lease and a minute between heartbeats, and tells agents so', () => {
     const config = configFromEnv({ BATON_TABLE: 't' });
-    expect(config).toEqual({ table: 't', leaseMs: 600_000, heartbeatSeconds: 60 });
+    expect(config).toEqual({ table: 't', leaseMs: 600_000, heartbeatSeconds: 60, adminGroup: 'admins' });
     expect(config).toEqual(configFor('t'));
     expect(timingOf(config)).toEqual({ leaseSeconds: 600, heartbeatSeconds: 60 });
   });

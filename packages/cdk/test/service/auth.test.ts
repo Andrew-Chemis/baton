@@ -90,7 +90,7 @@ describe('R7.1 tokens: issued and revoked from the board, stored only as a hash'
 
     const listed = await s.human.get('/agents');
     expect(listed.body.agents.find((a: any) => a.id === agentId).tokens).toEqual([
-      { tokenId, label: 'laptop', createdAt: expect.any(Number) },
+      { tokenId, label: 'laptop', createdAt: expect.any(Number), expiresAt: expect.any(Number) },
     ]);
 
     const revoked = await s.human.del(`/agents/${agentId}/tokens/${tokenId}`);

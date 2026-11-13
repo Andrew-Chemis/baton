@@ -18,6 +18,7 @@ import { ApiError, badRequest, forbidden } from './errors.ts';
 import { newId } from './ids.ts';
 import type { CardItem, EventItem } from './items.ts';
 import {
+  archivedPartition,
   attentionPartition,
   boardPartition,
   cardKeyItem,
@@ -148,6 +149,17 @@ interface CardQuery {
   attention?: boolean;
 }
 
+/** The live partition, and its archived shelf only when the caller asked for archived cards too. */
+async function withArchived(
+  partition: string,
+  archived: boolean | undefined,
+  read: (pk: string) => Promise<CardItem[]>,
+): Promise<CardItem[]> {
+  if (!archived) return read(partition);
+  const [live, shelved] = await Promise.all([read(partition), read(archivedPartition(partition))]);
+  return [...live, ...shelved];
+}
+
 export async function listCards(deps: Deps, actor: Actor, query: CardQuery): Promise<{ cards: CardView[] }> {
   const now = deps.now();
   let items: CardItem[];
@@ -165,22 +177,24 @@ export async function listCards(deps: Deps, actor: Actor, query: CardQuery): Pro
     items = mapped ? [await loadCard(deps, mapped.cardId)] : [];
   } else if (query.project) {
     const column = query.column ? columnOf(query.column) : undefined;
-    items = await queryAll<CardItem>(deps, {
-      IndexName: GSI1.name,
-      KeyConditionExpression: column ? '#pk = :pk AND begins_with(#sk, :prefix)' : '#pk = :pk',
-      ExpressionAttributeNames: column ? { '#pk': GSI1.pk, '#sk': GSI1.sk } : { '#pk': GSI1.pk },
-      ExpressionAttributeValues: column
-        ? { ':pk': boardPartition(query.project), ':prefix': columnPrefix(column) }
-        : { ':pk': boardPartition(query.project) },
-    });
+    const board = (pk: string) =>
+      queryAll<CardItem>(deps, {
+        IndexName: GSI1.name,
+        KeyConditionExpression: column ? '#pk = :pk AND begins_with(#sk, :prefix)' : '#pk = :pk',
+        ExpressionAttributeNames: column ? { '#pk': GSI1.pk, '#sk': GSI1.sk } : { '#pk': GSI1.pk },
+        ExpressionAttributeValues: column ? { ':pk': pk, ':prefix': columnPrefix(column) } : { ':pk': pk },
+      });
+    items = await withArchived(boardPartition(query.project), query.archived, board);
   } else if (query.repo) {
     const repo = normalizeRepo(query.repo);
-    items = await queryAll<CardItem>(deps, {
-      IndexName: GSI2.name,
-      KeyConditionExpression: '#pk = :pk',
-      ExpressionAttributeNames: { '#pk': GSI2.pk },
-      ExpressionAttributeValues: { ':pk': repoPartition(repo) },
-    });
+    const byRepo = (pk: string) =>
+      queryAll<CardItem>(deps, {
+        IndexName: GSI2.name,
+        KeyConditionExpression: '#pk = :pk',
+        ExpressionAttributeNames: { '#pk': GSI2.pk },
+        ExpressionAttributeValues: { ':pk': pk },
+      });
+    items = await withArchived(repoPartition(repo), query.archived, byRepo);
     if (query.column) {
       const column = columnOf(query.column);
       items = items.filter((c) => c.column === column);

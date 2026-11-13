@@ -31,6 +31,18 @@ export const LEASE_MINUTES_DEFAULT = 10;
 /** How often agents are asked to send a heartbeat, in seconds, unless the construct is told otherwise. */
 export const HEARTBEAT_SECONDS_DEFAULT = 60;
 
+/** The Cognito group whose members manage agents and tokens, unless the construct is told otherwise. */
+export const ADMIN_GROUP_DEFAULT = 'admins';
+
+/** Where the construct tells the Lambda the admin group's name. */
+export const ADMIN_GROUP_ENV = 'BATON_ADMIN_GROUP';
+
+/** The largest request body the API reads, in bytes. A card body is at most 20,000 characters, which UTF-8 can quadruple. */
+export const MAX_BODY_BYTES = 256 * 1024;
+
+/** Set to `1` on the Lambda when the construct turns on the board's custom metrics. */
+export const METRICS_ENV = 'BATON_METRICS';
+
 /** The environment variables the construct sets on the Lambda and the service reads back. */
 export const TIMING_ENV = { leaseMinutes: 'BATON_LEASE_MINUTES', heartbeatSeconds: 'BATON_HEARTBEAT_SECONDS' } as const;
 

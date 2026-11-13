@@ -22,7 +22,8 @@ export function makeClock(start = T0): Clock {
   return { now: () => current, advance: (ms) => void (current += ms) };
 }
 
-export type Who = { human: string } | { agent: string };
+/** A person is in the admin group unless `admin: false`. */
+export type Who = { human: string; admin?: boolean } | { agent: string };
 
 export interface Result<T = Record<string, any>> {
   status: number;
@@ -96,7 +97,15 @@ export async function newBoard(options: { leaseMs?: number; heartbeatSeconds?: n
     table,
     as: (who) =>
       'human' in who
-        ? caller('human', { jwt: { claims: { sub: `sub-${who.human}`, email: who.human } } })
+        ? caller('human', {
+            jwt: {
+              claims: {
+                sub: `sub-${who.human}`,
+                email: who.human,
+                ...(who.admin === false ? {} : { 'cognito:groups': '[admins]' }),
+              },
+            },
+          })
         : caller('agent', { lambda: { verdict: 'ok', agentId: who.agent } }),
     // Goes through the authorizer exactly as API Gateway would: the verdict it returns becomes the request context.
     withToken: (token) =>

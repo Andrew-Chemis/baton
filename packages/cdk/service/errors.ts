@@ -6,6 +6,7 @@ const ERROR_STATUS: Record<ErrorCode, number> = {
   missing_worktree: 400,
   unauthorized: 401,
   token_revoked: 401,
+  token_expired: 401,
   forbidden: 403,
   not_found: 404,
   claim_held: 409,
@@ -19,8 +20,12 @@ const ERROR_STATUS: Record<ErrorCode, number> = {
   project_has_claims: 409,
   conflict: 409,
   idempotent_replay: 422,
+  payload_too_large: 413,
   internal: 500,
 };
+
+/** Every code the API can answer with. */
+export const ERROR_CODES = Object.keys(ERROR_STATUS) as ErrorCode[];
 
 export class ApiError extends Error {
   readonly status: number;

@@ -4,12 +4,14 @@ import { App, Stack } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
 import { Certificate } from 'aws-cdk-lib/aws-certificatemanager';
 import { PublicHostedZone } from 'aws-cdk-lib/aws-route53';
+import { Topic } from 'aws-cdk-lib/aws-sns';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { runInNewContext } from 'node:vm';
 import { describe, expect, test } from 'vitest';
 import { API_ASSET_PATH, WEB_ASSET_PATH } from '../../src/assets.ts';
 import { BatonBoard, type BatonBoardProps } from '../../src/index.ts';
+import { LATEST_SCHEMA } from '../../src/schema-version.ts';
 
 function synth(props: Partial<BatonBoardProps> = {}, withEdge = true) {
   const app = new App();
@@ -61,10 +63,23 @@ describe('synthesis', () => {
   });
 
   test('the Lambda role may use the table and its indexes with the calls the service makes, and nothing else on DynamoDB', () => {
-    const statements = Object.values(template.findResources('AWS::IAM::Policy'))
-      .flatMap((p: any) => p.Properties.PolicyDocument.Statement)
-      .filter((s: any) => JSON.stringify(s.Action).includes('dynamodb'));
+    const policies = Object.entries(template.findResources('AWS::IAM::Policy'));
+    const dynamo = (id: string) =>
+      policies
+        .filter(([key]) => key.startsWith(id))
+        .flatMap(([, p]: [string, any]) => p.Properties.PolicyDocument.Statement)
+        .filter((s: any) => JSON.stringify(s.Action).includes('dynamodb'));
+    const statements = dynamo('BoardApiServiceRole');
     expect(statements).toHaveLength(1);
+    // Only the migration function scans, and it never touches an index.
+    const migrate = dynamo('BoardMigrateServiceRole');
+    expect(migrate).toHaveLength(1);
+    expect(migrate[0].Action.toSorted((a: string, b: string) => a.localeCompare(b))).toEqual([
+      'dynamodb:GetItem',
+      'dynamodb:Scan',
+      'dynamodb:UpdateItem',
+    ]);
+    expect(JSON.stringify(migrate[0].Resource)).not.toContain('/index/');
     expect(statements[0].Action.toSorted((a: string, b: string) => a.localeCompare(b))).toEqual([
       'dynamodb:ConditionCheckItem',
       'dynamodb:DeleteItem',
@@ -140,6 +155,8 @@ describe('synthesis', () => {
       'AWS::KMS::Key',
       'AWS::KMS::Alias',
       'AWS::ApplicationAutoScaling::ScalableTarget',
+      'AWS::CloudWatch::Alarm',
+      'AWS::CloudWatch::Dashboard',
     ]) {
       template.resourceCountIs(type, 0);
     }
@@ -293,5 +310,66 @@ describe('options', () => {
     expect(
       () => new BatonBoard(stack, 'B', { domainName: 'x.example.test', leaseMinutes: 1, heartbeatSeconds: 60 }),
     ).toThrow(/shorter than the lease/);
+  });
+
+  test('observability: JSON function logs, an access log with no headers or query, and no metrics unless asked', () => {
+    const { template } = synth();
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Handler: 'index.handler',
+      LoggingConfig: Match.objectLike({ LogFormat: 'JSON', ApplicationLogLevel: 'INFO' }),
+      Environment: { Variables: Match.not(Match.objectLike({ BATON_METRICS: Match.anyValue() })) },
+    });
+    const stage = Object.values(template.findResources('AWS::ApiGatewayV2::Stage'))[0] as any;
+    const format = JSON.parse(stage.Properties.AccessLogSettings.Format as string);
+    expect(Object.keys(format)).toEqual(
+      expect.arrayContaining(['requestId', 'routeKey', 'status', 'authorizerError', 'latencyMs']),
+    );
+    expect(JSON.stringify(format)).not.toMatch(/header|querystring|body/i);
+    template.resourceCountIs('AWS::Logs::LogGroup', 3);
+    template.allResourcesProperties('AWS::Logs::LogGroup', { RetentionInDays: 30 });
+  });
+
+  test('monitoring: six alarms that notify the topic, a dashboard when asked, and metrics on the Lambda', () => {
+    const app = new App();
+    const stack = new Stack(app, 'S', { env: { account: '123456789012', region: 'us-west-2' } });
+    const topic = new Topic(stack, 'Alerts');
+    new BatonBoard(stack, 'B', {
+      domainName: 'x.example.test',
+      metrics: true,
+      monitoring: { alarmTopic: topic, dashboard: true },
+    });
+    const template = Template.fromStack(stack);
+    template.resourceCountIs('AWS::CloudWatch::Alarm', 6);
+    template.allResourcesProperties('AWS::CloudWatch::Alarm', {
+      AlarmActions: [{ Ref: Match.stringLikeRegexp('^Alerts') }],
+      OKActions: [{ Ref: Match.stringLikeRegexp('^Alerts') }],
+      TreatMissingData: 'notBreaching',
+    });
+    template.resourceCountIs('AWS::CloudWatch::Dashboard', 1);
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Handler: 'index.handler',
+      Environment: { Variables: Match.objectLike({ BATON_METRICS: '1' }) },
+    });
+    const body = JSON.stringify(Object.values(template.findResources('AWS::CloudWatch::Dashboard'))[0]);
+    expect(body).toContain('ClaimTakenOver');
+  });
+
+  test('an admin group exists in the pool and its name reaches the Lambda', () => {
+    const { template } = synth({ adminGroupName: 'board-admins' });
+    template.hasResourceProperties('AWS::Cognito::UserPoolGroup', { GroupName: 'board-admins' });
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Handler: 'index.handler',
+      Environment: { Variables: Match.objectLike({ BATON_ADMIN_GROUP: 'board-admins' }) },
+    });
+  });
+
+  test('every deploy that raises the schema version runs the migrations from the same bundle', () => {
+    const { template } = synth();
+    template.hasResourceProperties('Custom::BatonSchema', { SchemaVersion: String(LATEST_SCHEMA) });
+    const fns = Object.values(template.findResources('AWS::Lambda::Function')) as any[];
+    const api = fns.find((f) => f.Properties.Handler === 'index.handler');
+    const migrate = fns.find((f) => f.Properties.Handler === 'index.migrate');
+    expect(migrate.Properties.Code.S3Key).toEqual(api.Properties.Code.S3Key);
+    expect(migrate.Properties.Timeout).toBe(14 * 60);
   });
 });
