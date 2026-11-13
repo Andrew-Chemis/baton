@@ -1,7 +1,6 @@
 // The release pipeline is code that publishes to a public registry, so its rules are checked like code. Every action is pinned to
 // a full commit SHA that is one of the pins already in use in the owner's other repositories; the publish job runs no repository
 // code and holds the only OIDC token; the release rules cannot produce a major version.
-import { analyzeCommits } from '@semantic-release/commit-analyzer';
 import { readFileSync, readdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
@@ -291,12 +290,32 @@ describe('.releaserc.json', () => {
     expect(JSON.stringify(config.plugins)).not.toContain('@semantic-release/npm');
   });
 
+  // The plugin the workflow runs, loaded the way semantic-release loads it. It requires its changelog preset from CommonJS, which a
+  // preset that ships ES modules only cannot satisfy: a run failed on exactly that, after every test had passed against a copy of the
+  // analyzer that imports its own preset. So these tests go through the plugin, never around it.
+  interface Unsquash {
+    analyzeCommits: (config: unknown, context: unknown) => Promise<'major' | 'minor' | 'patch' | null>;
+    generateNotes: (config: unknown, context: unknown) => Promise<string>;
+  }
+  const logger = { log: () => {}, error: () => {}, warn: () => {}, debug: () => {} };
+  const unsquash = () => createRequire(join(root, 'package.json'))('semantic-release-unsquash') as Unsquash;
+  const unsquashConfig = () => named('semantic-release-unsquash');
+
+  test('the notes generator loads its preset and writes the commit subject', async () => {
+    const notes = await unsquash().generateNotes(unsquashConfig(), {
+      commits: [{ hash: 'a'.repeat(40), message: 'feat: a thing', committerDate: '2026-11-13T00:00:00Z' }],
+      logger,
+      cwd: root,
+      lastRelease: { gitTag: 'v0.1.0' },
+      nextRelease: { version: '0.1.1', gitTag: 'v0.1.1' },
+      options: { repositoryUrl: 'https://github.com/Andrew-Chemis/baton' },
+    });
+    expect(notes).toContain('feat: a thing');
+  });
+
   describe('which commits release what', () => {
-    const analyzer = (named('semantic-release-unsquash') as { commitAnalyzerConfig: Record<string, unknown> })
-      .commitAnalyzerConfig;
-    const logger = { log: () => {}, error: () => {}, warn: () => {}, debug: () => {} };
     const release = (message: string) =>
-      analyzeCommits(analyzer, { commits: [{ hash: 'a'.repeat(40), message }], logger, cwd: root });
+      unsquash().analyzeCommits(unsquashConfig(), { commits: [{ hash: 'a'.repeat(40), message }], logger, cwd: root });
 
     test.each([
       ['feat: a thing', 'patch'],
@@ -312,13 +331,20 @@ describe('.releaserc.json', () => {
     });
 
     test.each([
-      'feat!: remove a verb',
-      'fix(cli)!: change an exit code',
       'feat: a thing\n\nBREAKING CHANGE: it no longer works the old way',
       'feat: a thing\n\nBREAKING-CHANGE: it no longer works the old way',
-    ])('a breaking marker is capped at a minor: %j', async (message) => {
+    ])('a breaking footer is capped at a minor: %j', async (message) => {
       expect(await release(message)).toBe('minor');
     });
+
+    // The plugin carries its own, older commit parser, which reads a `!` after the type as a header that is not conventional at
+    // all. Such a commit releases nothing, so it can never produce a major, but it is not released as a minor either.
+    test.each(['feat!: remove a verb', 'fix(cli)!: change an exit code'])(
+      'a breaking mark in the header releases nothing: %j',
+      async (message) => {
+        expect(await release(message)).toBeNull();
+      },
+    );
 
     test('a commit that is not conventional releases nothing', async () => {
       expect(await release('Update stuff')).toBeNull();
