@@ -1,5 +1,9 @@
 # Changelog
 
+## <small>0.1.3 (2026-11-22)</small>
+
+* chore: dogfood the board through the chemis plugin (#10) ([6e2cfb5](https://github.com/Andrew-Chemis/baton/commit/6e2cfb5)), closes [#10](https://github.com/Andrew-Chemis/baton/issues/10)
+
 ## <small>0.1.2 (2026-11-13)</small>
 
 * chore: add hooks that keep agent tool output small (#8) ([0d973bf](https://github.com/Andrew-Chemis/baton/commit/0d973bf)), closes [#8](https://github.com/Andrew-Chemis/baton/issues/8)
