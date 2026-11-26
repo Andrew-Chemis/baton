@@ -1,5 +1,9 @@
 # Changelog
 
+## <small>0.1.5 (2026-11-26)</small>
+
+* chore(deps-dev): Bump @types/node from 22.20.5 to 26.6.6 (#5) ([39979e6](https://github.com/Andrew-Chemis/baton/commit/39979e6)), closes [#5](https://github.com/Andrew-Chemis/baton/issues/5)
+
 ## <small>0.1.4 (2026-11-26)</small>
 
 * chore(deps-dev): Bump the dev-tooling group across 1 directory with 11 updates (#11) ([5499ace](https://github.com/Andrew-Chemis/baton/commit/5499ace)), closes [#11](https://github.com/Andrew-Chemis/baton/issues/11)
