@@ -1,5 +1,9 @@
 # Changelog
 
+## <small>0.1.4 (2026-11-26)</small>
+
+* chore(deps-dev): Bump the dev-tooling group across 1 directory with 11 updates (#11) ([5499ace](https://github.com/Andrew-Chemis/baton/commit/5499ace)), closes [#11](https://github.com/Andrew-Chemis/baton/issues/11)
+
 ## <small>0.1.3 (2026-11-22)</small>
 
 * chore: dogfood the board through the chemis plugin (#10) ([6e2cfb5](https://github.com/Andrew-Chemis/baton/commit/6e2cfb5)), closes [#10](https://github.com/Andrew-Chemis/baton/issues/10)
